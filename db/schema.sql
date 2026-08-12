@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS prospects (
     secteur             TEXT,
     taille_entreprise   TEXT,
     linkedin_url        TEXT UNIQUE,
+    getsales_lead_uuid  TEXT,  -- id du lead correspondant dans GetSales, résolu au premier contact
     email               TEXT,
 
     -- Cycle de vie du prospect. C'est CE champ que le manager regarde

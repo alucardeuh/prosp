@@ -4,3 +4,5 @@ __pycache__/
 db/prospection.db
 .venv/
 credentials/*.json
+.DS_Store
+**/.DS_Store

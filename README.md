@@ -198,6 +198,46 @@ dashboard — c'est un outil de suivi, pas encore de pilotage.
 le 5000 depuis Monterey et fait planter Flask dessus pour une raison qui
 n'a rien à voir avec le code.
 
+## Agent LinkedIn (validation humaine obligatoire, via GetSales)
+
+`agents/linkedin_agent.py` prend chaque prospect qualifié ayant un lien
+LinkedIn, crée/met à jour le lead correspondant dans GetSales, t'affiche
+le message prévu, et **n'envoie que si tu confirmes**. Volontairement
+plus simple que l'agent email : pas de lecture ni de classification des
+réponses — tu gères ça toi-même dans GetSales/LinkedIn.
+
+### Configuration (4 identifiants à récupérer dans ton dashboard GetSales)
+
+| Variable | Où le trouver |
+|---|---|
+| `GETSALES_HOST` | Page "API Keys" |
+| `GETSALES_API_KEY` | Page "API Keys" |
+| `GETSALES_LIST_UUID` | Page "Lists" > 3 points sur une liste > "Copy List ID" |
+| `GETSALES_SENDER_PROFILE_UUID` | Page "Sender Profiles" |
+
+### Avant le premier envoi réel
+
+Remplis `config/template_linkedin.yaml` avec ton vrai message (le script
+avertit si tu as laissé le placeholder).
+
+### Usage
+
+```bash
+python3 -m agents.linkedin_agent --dry-run       # teste tout le flux, zéro envoi réel
+python3 -m agents.linkedin_agent --limit 10       # revue réelle, limitée à 10 prospects
+python3 -m agents.linkedin_agent                  # revue réelle, jusqu'à 25 prospects par défaut
+```
+
+⚠️ Sans `--limit`, le script se plafonne lui-même à 25 prospects par
+lancement — c'est volontaire (montée en charge progressive, risque de
+restriction de compte LinkedIn). Augmente progressivement, pas d'un coup.
+
+⚠️ Point non vérifié empiriquement (à tester avec ton compte réel avant
+de lancer sur un vrai lot) : la doc GetSales ne précise pas si l'endpoint
+d'envoi gère aussi les contacts pas encore connectés (invitation) ou
+suppose une connexion déjà établie. Teste d'abord sur un contact que tu
+sais déjà connecté en 1er degré.
+
 ## Et après ?
 
 Dans l'ordre qu'on avait posé :
@@ -205,8 +245,10 @@ Dans l'ordre qu'on avait posé :
 1. ✅ Schéma de base + agent qualification
 2. ✅ Agent email en lecture seule
 3. ✅ Agent email en envoi, avec validation humaine
-4. Agent LinkedIn (le plus risqué — nécessite de choisir un outil tiers payant)
-5. Agent réseaux sociaux
-6. ✅ Manager + dashboard (ce qu'on vient d'ajouter, sur le périmètre existant — sera étendu à LinkedIn/réseaux quand ils existeront)
+4. ✅ Agent LinkedIn, avec validation humaine (ce qu'on vient d'ajouter, via GetSales)
+5. ~~Agent réseaux sociaux~~ (pas nécessaire, d'après toi)
+6. ✅ Manager + dashboard (couvre qualification + email ; pas encore étendu à LinkedIn)
 
-On construit la suite dès que tu veux, dans ce même dossier.
+Reste en option, pas construit : la synchronisation HubSpot (vue CRM en
+miroir de ce que fait Gmail — GetSales a sa propre intégration HubSpot
+native si tu préfères passer par là plutôt que par du code custom).

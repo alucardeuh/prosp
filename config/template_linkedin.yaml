@@ -1,0 +1,27 @@
+# Template du message LinkedIn (premier envoi uniquement — les relances,
+# c'est toi qui les gères directement dans GetSales/LinkedIn).
+# À REMPLACER par ton vrai message avant tout envoi réel.
+#
+# Variables disponibles : {prenom} {nom} {poste} {entreprise} {secteur}
+# {taille_entreprise}. Une variable absente s'affiche telle quelle plutôt
+# que de faire planter le script.
+
+# Optionnel, max 300 caractères (limite LinkedIn) — utilisé uniquement si
+# le contact n'est pas encore connecté. Laisse vide si tous tes contacts
+# sont déjà des relations 1er degré.
+note_connexion: ""
+
+premier_message: |
+  À REMPLIR — ceci est un template placeholder. Remplace tout ce texte par
+  ton vrai message avant d'envoyer quoi que ce soit de réel.
+
+  Bonjour {prenom},
+
+  [Ton accroche ici]
+
+  [Ta proposition de valeur ici]
+
+  [Ton call-to-action ici]
+
+  Cordialement,
+  SAMMPO

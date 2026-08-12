@@ -15,9 +15,16 @@ SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
 def init_db(db_path: Path = DB_PATH) -> None:
-    """Crée la base et les tables si elles n'existent pas encore."""
+    """Crée la base et les tables si elles n'existent pas encore.
+    Ajoute aussi les colonnes manquantes sur une base déjà existante
+    (migration légère, sans framework dédié — le projet est encore petit)."""
     with sqlite3.connect(db_path) as conn:
         conn.executescript(SCHEMA_PATH.read_text())
+        colonnes_existantes = {
+            row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()
+        }
+        if "getsales_lead_uuid" not in colonnes_existantes:
+            conn.execute("ALTER TABLE prospects ADD COLUMN getsales_lead_uuid TEXT")
         conn.commit()
 
 
@@ -155,3 +162,11 @@ def list_interactions(prospect_id: int, db_path: Path = DB_PATH) -> list[dict]:
             (prospect_id,),
         ).fetchall()
         return [dict(r) for r in rows]
+
+
+def set_getsales_lead_uuid(prospect_id: int, lead_uuid: str, db_path: Path = DB_PATH) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE prospects SET getsales_lead_uuid = ? WHERE id = ?",
+            (lead_uuid, prospect_id),
+        )
