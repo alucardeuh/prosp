@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Pipeline de prospection</h1>
+<div class="sub">{{ total }} prospect(s) au total{% if filtre_actif %} — filtré sur "{{ filtre_actif }}"{% endif %}</div>
+
+<div class="funnel">
+    <a href="/" class="funnel-item {{ 'actif' if not filtre_actif }}">
+        <div class="count">{{ total }}</div>
+        <div class="label">Tous</div>
+    </a>
+    {% for statut in statuts %}
+    <a href="/?statut={{ statut }}" class="funnel-item {{ 'actif' if filtre_actif == statut }}">
+        <div class="count">{{ counts[statut] }}</div>
+        <div class="label">{{ statut }}</div>
+    </a>
+    {% endfor %}
+</div>
+
+{% if prospects %}
+<table>
+    <thead>
+        <tr>
+            <th>Nom</th>
+            <th>Poste</th>
+            <th>Entreprise</th>
+            <th>Statut</th>
+            <th>Score</th>
+            <th>Dernière action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for p in prospects %}
+        <tr class="clickable" onclick="window.location='/prospect/{{ p.id }}'">
+            <td>{{ p.prenom }} {{ p.nom }}</td>
+            <td>{{ p.poste or '—' }}</td>
+            <td>{{ p.entreprise or '—' }}</td>
+            <td><span class="badge {{ p.statut }}">{{ p.statut }}</span></td>
+            <td>{{ p.score_qualification if p.score_qualification is not none else '—' }}</td>
+            <td>{{ p.date_derniere_action or '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty">Aucun prospect{% if filtre_actif %} avec ce statut{% endif %}.</div>
+{% endif %}
+{% endblock %}

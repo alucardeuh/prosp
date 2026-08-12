@@ -1,0 +1,195 @@
+"""
+Agent email — LECTURE SEULE.
+
+Rôle : pour chaque prospect en base ayant un email, chercher ses réponses
+dans Gmail, les faire classer par Claude (intéressé / pas intéressé /
+à relancer / désinscription / absence du bureau / autre), et écrire le
+résultat dans notre base. Ne modifie et n'envoie jamais rien sur Gmail —
+le scope OAuth utilisé (gmail.readonly) ne le permet techniquement pas.
+
+Usage :
+    python -m agents.email_reader                  # scan tous les prospects avec email
+    python -m agents.email_reader --dry-run         # simule sans toucher Gmail ni l'API Claude
+    python -m agents.email_reader --test-connexion  # vérifie juste que l'OAuth Gmail fonctionne
+"""
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from db import database as db  # noqa: E402
+from integrations import gmail_client  # noqa: E402
+
+MODEL = "claude-sonnet-5"
+
+TOOL_CLASSIFICATION = {
+    "name": "classifier_email",
+    "description": "Classe la réponse email d'un prospect selon son intention.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "categorie": {
+                "type": "string",
+                "enum": [
+                    "interesse", "pas_interesse", "a_relancer",
+                    "desinscription", "absence_bureau", "autre",
+                ],
+                "description": (
+                    "interesse: veut avancer / en savoir plus. pas_interesse: refus "
+                    "clair. a_relancer: demande de recontacter plus tard. "
+                    "desinscription: demande explicite d'arrêt de contact. "
+                    "absence_bureau: réponse automatique (vacances, hors bureau). "
+                    "autre: ne rentre dans aucune case ci-dessus."
+                ),
+            },
+            "raison": {"type": "string", "description": "justification courte de la catégorie choisie"},
+            "action_recommandee": {
+                "type": "string",
+                "description": "ce qu'un humain devrait faire ensuite, en une phrase",
+            },
+        },
+        "required": ["categorie", "raison", "action_recommandee"],
+    },
+}
+
+# Catégories qui déclenchent une mise à jour automatique du statut.
+# a_relancer / absence_bureau / autre sont volontairement absentes : un
+# humain doit trancher, l'agent ne fait que remonter l'info (dans interactions).
+CATEGORIE_VERS_STATUT = {
+    "interesse": "repondu",
+    "pas_interesse": "perdu",
+    "desinscription": "desinscrit",
+}
+
+
+def build_prompt(prospect: dict, email: dict) -> str:
+    return f"""Tu es un agent qui classe les réponses email reçues dans le
+cadre d'une prospection commerciale B2B. Appelle l'outil `classifier_email`
+avec ta décision, ne réponds jamais en texte libre.
+
+# Prospect
+{prospect.get('prenom', '')} {prospect.get('nom', '')} - {prospect.get('poste', '')} chez {prospect.get('entreprise', '')}
+
+# Email reçu
+De : {email.get('de', '')}
+Sujet : {email.get('sujet', '')}
+Contenu :
+{email.get('corps', '')[:3000]}
+
+Si le message contient la moindre demande d'arrêt de contact (désinscription,
+"ne me contactez plus", "retirez-moi de votre liste", etc.), classe-le
+TOUJOURS en 'desinscription', même si le reste du message est ambigu :
+mieux vaut arrêter de contacter quelqu'un par excès de prudence que l'inverse."""
+
+
+def classify_email(prospect: dict, email: dict, client=None) -> dict:
+    if client is None:
+        import anthropic
+
+        client = anthropic.Anthropic()
+
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=1024,
+        tools=[TOOL_CLASSIFICATION],
+        tool_choice={"type": "tool", "name": "classifier_email"},
+        messages=[{"role": "user", "content": build_prompt(prospect, email)}],
+    )
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "classifier_email":
+            return block.input
+    raise RuntimeError("L'API n'a pas retourné d'appel d'outil (réponse inattendue).")
+
+
+def _fake_classification() -> dict:
+    return {
+        "categorie": "interesse",
+        "raison": "[DRY-RUN] Réponse simulée, aucun appel API réel n'a été fait.",
+        "action_recommandee": "[DRY-RUN] aucune action réelle recommandée.",
+    }
+
+
+def _fake_email(prospect: dict) -> dict:
+    return {
+        "id": f"dry-run-{prospect['id']}",
+        "thread_id": "dry-run",
+        "de": prospect.get("email") or "test@example.com",
+        "sujet": "Re: prise de contact",
+        "date": "dry-run",
+        "corps": "Ceci est un email simulé pour tester le flux sans Gmail ni API Claude.",
+    }
+
+
+def run(dry_run: bool = False, test_connexion: bool = False) -> None:
+    if test_connexion:
+        service = gmail_client.get_service()
+        messages = gmail_client.search_messages(service, query="", max_results=3)
+        print(f"Connexion Gmail OK. {len(messages)} message(s) récent(s) trouvé(s) dans la boîte.")
+        return
+
+    prospects = db.list_prospects_avec_email()
+    if not prospects:
+        print("Aucun prospect avec une adresse email en base.")
+        return
+
+    service = None if dry_run else gmail_client.get_service()
+    total_traites = 0
+
+    for p in prospects:
+        if dry_run:
+            emails = [_fake_email(p)]
+        else:
+            trouves = gmail_client.search_messages(service, query=f"from:{p['email']}", max_results=10)
+            emails = []
+            for m in trouves:
+                if db.est_email_traite(m["id"]):
+                    continue
+                emails.append(gmail_client.get_message_content(service, m["id"]))
+
+        for email in emails:
+            try:
+                resultat = _fake_classification() if dry_run else classify_email(p, email)
+
+                nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
+                if nouveau_statut:
+                    db.update_statut(p["id"], nouveau_statut)
+
+                db.add_interaction(
+                    p["id"], "email_recu",
+                    f"[{resultat['categorie']}] {resultat['raison']} -> {resultat['action_recommandee']}",
+                )
+                if not dry_run:
+                    db.marquer_email_traite(email["id"], p["id"])
+
+                total_traites += 1
+                marqueur = "🔴" if resultat["categorie"] == "desinscription" else "  "
+                print(f"{marqueur}[{p['id']}] {p.get('prenom','')} {p.get('nom','')} "
+                      f"- {resultat['categorie']} : {resultat['raison']}")
+            except Exception as exc:  # noqa: BLE001 - continuer sur les autres emails
+                print(f"  [{p['id']}] ERREUR sur email {email.get('id')} : {exc}", file=sys.stderr)
+
+    print(f"\n{total_traites} email(s) classé(s).")
+
+
+if __name__ == "__main__":
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Agent email (lecture seule)")
+    parser.add_argument("--dry-run", action="store_true", help="simule sans toucher Gmail ni l'API Claude")
+    parser.add_argument("--test-connexion", action="store_true", help="vérifie juste la connexion OAuth Gmail")
+    args = parser.parse_args()
+
+    if not args.dry_run and not args.test_connexion and not os.environ.get("ANTHROPIC_API_KEY"):
+        print("ANTHROPIC_API_KEY n'est pas définie. Utilise --dry-run pour tester sans clé.", file=sys.stderr)
+        sys.exit(1)
+
+    db.init_db()
+    try:
+        run(dry_run=args.dry_run, test_connexion=args.test_connexion)
+    except FileNotFoundError as exc:
+        print(f"❌ {exc}", file=sys.stderr)
+        sys.exit(1)

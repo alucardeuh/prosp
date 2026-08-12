@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block content %}
+<a href="/" class="back">&larr; Retour</a>
+<h1>{{ prospect.prenom }} {{ prospect.nom }}</h1>
+<div class="sub"><span class="badge {{ prospect.statut }}">{{ prospect.statut }}</span></div>
+
+<dl class="detail-grid">
+    <dt>Poste</dt><dd>{{ prospect.poste or '—' }}</dd>
+    <dt>Entreprise</dt><dd>{{ prospect.entreprise or '—' }}</dd>
+    <dt>Secteur</dt><dd>{{ prospect.secteur or '—' }}</dd>
+    <dt>Taille</dt><dd>{{ prospect.taille_entreprise or '—' }}</dd>
+    <dt>Email</dt><dd>{{ prospect.email or '—' }}</dd>
+    <dt>LinkedIn</dt><dd>{% if prospect.linkedin_url %}<a href="{{ prospect.linkedin_url }}" target="_blank">{{ prospect.linkedin_url }}</a>{% else %}—{% endif %}</dd>
+    <dt>Score</dt><dd>{{ prospect.score_qualification if prospect.score_qualification is not none else '—' }}</dd>
+    <dt>Raison</dt><dd>{{ prospect.raison_qualification or '—' }}</dd>
+    <dt>Source</dt><dd>{{ prospect.source or '—' }}</dd>
+    <dt>Créé le</dt><dd>{{ prospect.date_creation or '—' }}</dd>
+    <dt>Notes</dt><dd>{{ prospect.notes or '—' }}</dd>
+</dl>
+
+<h2>Historique</h2>
+{% if interactions %}
+{% for i in interactions %}
+<div class="interaction">
+    <div class="meta">{{ i.date }} — {{ i.type }}</div>
+    <div>{{ i.contenu }}</div>
+</div>
+{% endfor %}
+{% else %}
+<div class="empty">Aucune interaction enregistrée.</div>
+{% endif %}
+{% endblock %}
