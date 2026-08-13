@@ -96,6 +96,15 @@ def run(dry_run: bool = False) -> None:
     if en_attente_action:
         print(f"👉 {en_attente_action} prospect(s) ont répondu et attendent une décision humaine (statut 'repondu').")
 
+    try:
+        delai = int(db.get_reglage("delai_relance_jours") or 7)
+        maxr = int(db.get_reglage("max_relances") or 2)
+        dues = len(db.prospects_a_relancer(db.profil_actif(), delai, maxr))
+        if dues:
+            print(f"👉 {dues} relance(s) due(s) — page /relances de l'interface.")
+    except Exception:  # noqa: BLE001 - le résumé ne doit jamais faire planter le cycle
+        pass
+
     if not en_attente_envoi and not en_attente_action:
         print("Rien n'attend d'action humaine pour le moment.")
 

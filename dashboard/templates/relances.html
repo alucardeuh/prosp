@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Relances{% endblock %}
+{% block content %}
+<div class="entete-page">
+    <div>
+        <h1>Relances</h1>
+        <div class="sous-titre">
+            Prospects contactés il y a plus de {{ delai }} jours sans réponse
+            (max {{ max_relances }} relances chacun). Relance courte, angle
+            nouveau, qui fait référence au premier email.
+            Quota restant aujourd'hui : <strong class="mono js-quota-restant">{{ quota_restant }}</strong>.
+        </div>
+    </div>
+    {% if sans_brouillon %}
+    <button class="primaire" onclick="lancerJob('/api/jobs/generer-brouillons', {type: 'relance'}, this)">
+        Générer les {{ [sans_brouillon|length, quota_restant]|min }} relance(s)
+    </button>
+    {% endif %}
+</div>
+
+{% if not avec_brouillon and not sans_brouillon %}
+<div class="vide">
+    Aucune relance due pour le moment. Les prospects contactés apparaîtront
+    ici {{ delai }} jours après leur dernier email resté sans réponse.
+</div>
+{% endif %}
+
+{% for p in avec_brouillon %}
+<div class="carte carte-email" id="carte-{{ p.id }}">
+    <div class="tete">
+        <div class="qui">
+            {{ p.prenom }} {{ p.nom }} <span class="etiquette-relance">relance {{ (p.nb_relances or 0) + 1 }}/{{ max_relances }}</span>
+            <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}</small>
+        </div>
+        <a href="/prospect/{{ p.id }}">fiche</a>
+    </div>
+    <div class="corps-zone">
+        <input class="objet" value="{{ p.brouillon.objet }}" placeholder="Objet">
+        <textarea class="corps">{{ p.brouillon.corps }}</textarea>
+    </div>
+    <div class="pied">
+        <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer la relance</button>
+        <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
+        <button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'relance'}, this)">Regénérer</button>
+        <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
+    </div>
+</div>
+{% endfor %}
+
+{% if sans_brouillon %}
+<div class="carte">
+    <h2>Relances dues sans brouillon ({{ sans_brouillon|length }})</h2>
+    <div class="table-englobe">
+    <table>
+        <thead><tr><th>Nom</th><th>Entreprise</th><th>Dernier email</th><th>Relances</th><th></th></tr></thead>
+        <tbody>
+        {% for p in sans_brouillon %}
+        <tr>
+            <td><a href="/prospect/{{ p.id }}">{{ p.prenom }} {{ p.nom }}</a></td>
+            <td>{{ p.entreprise or '—' }}</td>
+            <td class="mono">{{ (p.date_dernier_envoi or '')[:10] }}</td>
+            <td class="mono">{{ p.nb_relances or 0 }}/{{ max_relances }}</td>
+            <td><button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'relance'}, this)">Générer</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

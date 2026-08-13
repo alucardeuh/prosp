@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Stats{% endblock %}
+{% block content %}
+<div class="entete-page">
+    <div>
+        <h1>Statistiques</h1>
+        <div class="sous-titre">Profil actif uniquement. De quoi savoir si la prospection paie.</div>
+    </div>
+</div>
+
+<div class="tuiles">
+    <div class="tuile">
+        <div class="valeur">{{ g.total }}</div>
+        <div class="legende">prospects en base</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.contactes_cumules }}</div>
+        <div class="legende">contactés (cumul)</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.reponses }}</div>
+        <div class="legende">réponses reçues</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.taux_reponse if g.taux_reponse is not none else '—' }}<small>%</small></div>
+        <div class="legende">taux de réponse</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.taux_qualification if g.taux_qualification is not none else '—' }}<small>%</small></div>
+        <div class="legende">taux de qualification</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.rdv }}</div>
+        <div class="legende">rendez-vous obtenus</div>
+    </div>
+    <div class="tuile">
+        <div class="valeur">{{ g.desinscrits }}</div>
+        <div class="legende">désinscrits</div>
+    </div>
+</div>
+
+<div class="carte">
+    <h2>Envois par semaine (8 dernières)</h2>
+    {% if max_semaine %}
+    <div class="graphe-semaines">
+        {% for s in semaines %}
+        <div class="colonne">
+            <div class="nombre">{{ s.envois + s.relances if s.envois + s.relances else '' }}</div>
+            <div class="empilement" style="height: {{ ((s.envois + s.relances) / max_semaine * 100) | round(1) }}%">
+                {% if s.relances %}<div class="part-relances" style="flex: {{ s.relances }}"></div>{% endif %}
+                {% if s.envois %}<div class="part-envois" style="flex: {{ s.envois }}"></div>{% endif %}
+            </div>
+            <div class="etiquette">{{ s.semaine }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="legende-graphe">
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--pine);margin-right:5px"></span>Premiers emails</span>
+        <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:var(--amber);margin-right:5px"></span>Relances</span>
+    </div>
+    {% else %}
+    <div class="vide">Aucun envoi enregistré pour l'instant — le graphe se remplira dès les premiers emails partis.</div>
+    {% endif %}
+</div>
+{% endblock %}

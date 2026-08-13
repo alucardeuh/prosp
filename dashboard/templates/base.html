@@ -3,153 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}Prospection SAMMPO{% endblock %}</title>
-    <style>
-        :root {
-            --bg: #0f1115;
-            --surface: #171a21;
-            --surface-2: #1d212b;
-            --border: #2a2e38;
-            --text: #e6e8eb;
-            --text-dim: #9298a3;
-            --accent: #5b8def;
-            --green: #3fb872;
-            --red: #e5534b;
-            --amber: #d9a441;
-        }
-        * { box-sizing: border-box; }
-        body {
-            font-family: -apple-system, "Segoe UI", sans-serif;
-            background: var(--bg);
-            color: var(--text);
-            margin: 0;
-            padding: 0 32px 48px;
-        }
-        h1 { font-size: 20px; margin: 0 0 4px; }
-        h2 { font-size: 13px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; margin: 32px 0 12px; }
-        .sub { color: var(--text-dim); font-size: 13px; margin-bottom: 24px; }
-        a { color: var(--accent); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-        p.aide { color: var(--text-dim); font-size: 12.5px; margin: 4px 0 0; line-height: 1.4; }
-
-        /* --- Navigation --- */
-        nav {
-            display: flex; gap: 4px; align-items: center;
-            padding: 20px 0; margin-bottom: 8px;
-            border-bottom: 1px solid var(--border);
-        }
-        nav .brand { font-weight: 700; margin-right: 20px; color: var(--text); }
-        nav a.nav-link {
-            color: var(--text-dim); text-decoration: none; font-size: 13.5px;
-            padding: 6px 12px; border-radius: 6px;
-        }
-        nav a.nav-link:hover { background: var(--surface); color: var(--text); }
-        nav a.nav-link.actif { background: var(--surface); color: var(--text); font-weight: 600; }
-
-        /* --- Flash messages --- */
-        .flash { padding: 12px 16px; border-radius: 8px; margin: 20px 0; font-size: 13.5px; }
-        .flash.succes { background: rgba(63,184,114,0.12); color: var(--green); border: 1px solid rgba(63,184,114,0.3); }
-        .flash.erreur { background: rgba(229,83,75,0.12); color: var(--red); border: 1px solid rgba(229,83,75,0.3); }
-        .flash.info { background: rgba(91,141,239,0.12); color: var(--accent); border: 1px solid rgba(91,141,239,0.3); }
-
-        /* --- Funnel / cards --- */
-        .funnel { display: flex; gap: 8px; margin-bottom: 32px; flex-wrap: wrap; }
-        .funnel-item {
-            background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
-            padding: 12px 16px; min-width: 90px; text-decoration: none; color: var(--text);
-        }
-        .funnel-item.actif { border-color: var(--accent); }
-        .funnel-item .count { font-size: 22px; font-weight: 600; }
-        .funnel-item .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.03em; }
-
-        .carte {
-            background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
-            padding: 24px; margin-bottom: 20px;
-        }
-        .actions-rapides { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 32px; }
-
-        /* --- Table --- */
-        table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 8px; overflow: hidden; }
-        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px; }
-        th { color: var(--text-dim); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.03em; }
-        tr:last-child td { border-bottom: none; }
-        tr.clickable:hover { background: var(--surface-2); cursor: pointer; }
-
-        .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
-        .badge.nouveau { background: #2a2e38; color: var(--text-dim); }
-        .badge.qualifie { background: rgba(63,184,114,0.15); color: var(--green); }
-        .badge.disqualifie { background: rgba(229,83,75,0.15); color: var(--red); }
-        .badge.contacte { background: rgba(91,141,239,0.15); color: var(--accent); }
-        .badge.repondu { background: rgba(217,164,65,0.15); color: var(--amber); }
-        .badge.rdv { background: rgba(63,184,114,0.25); color: var(--green); }
-        .badge.perdu { background: #2a2e38; color: var(--text-dim); }
-        .badge.desinscrit { background: rgba(229,83,75,0.25); color: var(--red); }
-
-        .empty { color: var(--text-dim); font-style: italic; padding: 24px; text-align: center; }
-        .back { display: inline-block; margin-bottom: 16px; font-size: 13px; }
-
-        .detail-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; font-size: 13px; }
-        .detail-grid dt { margin: 0; color: var(--text-dim); }
-        .detail-grid dd { margin: 0; }
-
-        .interaction { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; font-size: 13px; }
-        .interaction .meta { color: var(--text-dim); font-size: 11px; margin-bottom: 4px; }
-
-        /* --- Forms & buttons --- */
-        label { display: block; font-size: 12.5px; color: var(--text-dim); margin: 14px 0 5px; font-weight: 500; }
-        label:first-child { margin-top: 0; }
-        input[type=text], input[type=email], input[type=number], input[type=file], textarea, select {
-            width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-            padding: 9px 11px; color: var(--text); font-size: 13.5px; font-family: inherit;
-        }
-        input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
-        textarea { resize: vertical; line-height: 1.5; }
-
-        button, .btn {
-            display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-            border: 1px solid var(--border); background: var(--surface); color: var(--text);
-            padding: 9px 16px; border-radius: 7px; font-size: 13.5px; font-weight: 500;
-            font-family: inherit;
-        }
-        button:hover, .btn:hover { background: var(--surface-2); text-decoration: none; }
-        button.primaire { background: var(--accent); border-color: var(--accent); color: #0b1220; font-weight: 600; }
-        button.primaire:hover { opacity: 0.9; }
-        button.succes { background: var(--green); border-color: var(--green); color: #0b1220; font-weight: 600; }
-        button.danger { background: transparent; border-color: var(--border); color: var(--text-dim); }
-        button.danger:hover { border-color: var(--red); color: var(--red); }
-        form.inline { display: inline; }
-
-        .grille-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
-        @media (max-width: 800px) { .grille-2 { grid-template-columns: 1fr; } }
-
-        pre.log {
-            background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-            padding: 16px; font-size: 12.5px; line-height: 1.6; overflow-x: auto;
-            white-space: pre-wrap; word-break: break-word;
-        }
-
-        .brouillon-objet { font-weight: 600; margin-bottom: 8px; }
-        .brouillon-corps {
-            background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-            padding: 16px; font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 14px;
-        }
-    </style>
+    <title>{% block title %}Prospection{% endblock %}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
 <body>
-    <nav>
-        <span class="brand">📨 Prospection SAMMPO</span>
-        <a class="nav-link {{ 'actif' if actif == 'dashboard' }}" href="/">Tableau de bord</a>
-        <a class="nav-link {{ 'actif' if actif == 'ajouter' }}" href="/ajouter">Ajouter des prospects</a>
-        <a class="nav-link {{ 'actif' if actif == 'envoi' }}" href="/envoi">Envoyer des emails</a>
-        <a class="nav-link {{ 'actif' if actif == 'parametres' }}" href="/parametres">Paramètres</a>
-    </nav>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% for categorie, message in messages %}
+<div id="bandeau-job" aria-live="polite">
+    <div class="ligne">
+        <span class="titre-job"></span>
+        <div class="barre"><div></div></div>
+        <span class="compte mono"></span>
+    </div>
+    <div class="dernier-log"></div>
+</div>
+
+<div class="coque">
+    <aside class="sidebar">
+        <div class="marque">Prospection<small>pilotage commercial</small></div>
+
+        <div class="selecteur-profil" title="Profil actif — chaque profil a son ICP, son ton d'email et ses prospects">
+            <select onchange="changerProfil(this)" aria-label="Profil actif">
+                {% for p in tous_profils %}
+                <option value="{{ p }}" {% if p == profil_actif %}selected{% endif %}>{{ p }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <nav class="menu">
+            <a href="/" class="{{ 'actif' if actif == 'dashboard' }}">Pipeline
+                {% if nb_repondu %}<span class="badge chaud" title="Réponses en attente de décision">{{ nb_repondu }}</span>{% endif %}
+            </a>
+            <a href="/envoi" class="{{ 'actif' if actif == 'envoi' }}">Envoi
+                {% if nb_a_envoyer %}<span class="badge">{{ nb_a_envoyer }}</span>{% endif %}
+            </a>
+            <a href="/relances" class="{{ 'actif' if actif == 'relances' }}">Relances
+                {% if nb_a_relancer %}<span class="badge chaud">{{ nb_a_relancer }}</span>{% endif %}
+            </a>
+            <a href="/ajouter" class="{{ 'actif' if actif == 'ajouter' }}">Ajouter</a>
+            <a href="/stats" class="{{ 'actif' if actif == 'stats' }}">Stats</a>
+            <a href="/parametres" class="{{ 'actif' if actif == 'parametres' }}">Paramètres</a>
+        </nav>
+
+        <div class="pied">
+            <div class="quota-jour">
+                Envois aujourd'hui
+                <div class="chiffres">{{ envois_jour }} / {{ limite_jour }}</div>
+                <div class="quota-barre">
+                    <div class="{{ 'plein' if envois_jour >= limite_jour }}"
+                         style="width: {{ (100 * envois_jour / limite_jour) | round if limite_jour else 0 }}%"></div>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="contenu">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for categorie, message in messages %}
             <div class="flash {{ categorie }}">{{ message }}</div>
-        {% endfor %}
-    {% endwith %}
+            {% endfor %}
+        {% endwith %}
+        {% block content %}{% endblock %}
+    </main>
+</div>
 
-    {% block content %}{% endblock %}
+<div id="toasts" aria-live="polite"></div>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
 </html>

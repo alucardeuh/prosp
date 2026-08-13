@@ -1,0 +1,55 @@
+# ==========================================================================
+# Définition de l'ICP (Ideal Customer Profile) — SAMMPO
+# Basé sur sammpo.com. À affiner au fur et à mesure des premiers retours
+# terrain (les vrais signaux qui convertissent ne sont jamais exactement
+# ceux qu'on imagine au départ).
+# ==========================================================================
+
+produit:
+  nom: "SAMMPO"
+  description: >
+    Cabinet de conseil en stratégie de croissance spécialisé dans la
+    performance commerciale et la prise de décision assistée par la data,
+    pour toute direction commerciale/data structurée, tous secteurs
+    confondus. Trois piliers : valorisation des données (structuration,
+    fiabilisation, automatisation), stratégie commerciale (prix, cycle de
+    vente, promotions, lead scoring), et business intelligence (tableaux
+    de bord sur mesure Power BI / R / Excel). Dispose aussi d'une offre
+    verticale spécialisée "Kaivaa" pour la grande consommation (FMCG) sur
+    le Revenue Growth Management, mais ce n'est pas l'angle prioritaire.
+  proposition_de_valeur: >
+    Aide les directions commerciales à prendre de meilleures décisions plus
+    vite grâce à des données fiables et des outils de pilotage sur mesure,
+    avec des résultats mesurables (ex : +150K€ de marge par million investi
+    en promotion pour les clients FMCG).
+
+cible:
+  secteurs:
+    - "Finance / services financiers"
+    - "BTP / construction / infrastructure"
+    - "Télécoms / opérateurs d'infrastructure"
+    - "Grande consommation / FMCG (offre verticale Kaivaa disponible, mais pas la priorité)"
+    - "Plus largement : toute entreprise avec une direction commerciale structurée et des enjeux data/pilotage"
+  taille_entreprise:
+    - "ETI et grands groupes (assez structurés pour avoir une direction commerciale et/ou data dédiée)"
+  postes:
+    - "Directeur commercial / Directeur des ventes"
+    - "Directeur Digital / Data / Systèmes d'Information"
+    - "Président / Directeur général (structures plus petites où ces fonctions sont moins cloisonnées)"
+    - "Category Manager / Trade Marketing Manager / Directeur RGM (spécifique FMCG, secondaire)"
+  zones_geographiques:
+    - "France"
+  signaux_achat:
+    - "Recrute actuellement pour un poste data / BI / analytics"
+    - "Migration récente ou en cours vers Power BI"
+    - "Mentionne publiquement des difficultés de pilotage commercial ou de fiabilité des données"
+    - "Changement récent de direction commerciale ou data (nouveau décideur = fenêtre d'opportunité)"
+    - "Entreprise FMCG qui investit beaucoup en promotions GMS (signal pour l'offre Kaivaa spécifiquement)"
+
+exclusions:
+  - "Entreprises trop petites pour avoir une direction commerciale structurée (TPE, indépendants)"
+  - "Cabinets de conseil ou agences concurrents"
+  - "Entreprises sans activité commerciale B2B/B2C significative à optimiser"
+
+seuil_qualification: 60  # score minimum (0-100) pour considérer un prospect "qualifié"
+

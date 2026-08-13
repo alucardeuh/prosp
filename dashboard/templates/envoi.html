@@ -1,51 +1,71 @@
 {% extends "base.html" %}
+{% block title %}Envoi{% endblock %}
 {% block content %}
-<h1>Envoyer des emails</h1>
-<div class="sub">
-    Un email différent est rédigé par Claude pour chaque prospect (avec
-    recherche d'actualité sur son entreprise). Rien ne part sans que tu
-    cliques "Envoyer".
+<div class="entete-page">
+    <div>
+        <h1>Envoyer les premiers emails</h1>
+        <div class="sous-titre">
+            Chaque email est rédigé par Claude pour ce prospect précis (recherche
+            d'actualité incluse). Tout est éditable, rien ne part sans ton clic.
+            Quota restant aujourd'hui : <strong class="mono js-quota-restant">{{ quota_restant }}</strong>.
+        </div>
+    </div>
+    {% if sans_brouillon %}
+    <button class="primaire" onclick="lancerJob('/api/jobs/generer-brouillons', {type: 'initial'}, this)">
+        Générer les {{ [sans_brouillon|length, quota_restant]|min }} brouillon(s)
+    </button>
+    {% endif %}
 </div>
 
-{% if prospects %}
-    {% for p in prospects %}
-    <div class="carte">
-        <div style="display:flex; justify-content:space-between; align-items:start; gap:16px">
-            <div>
-                <strong>{{ p.prenom }} {{ p.nom }}</strong>
-                <span style="color:var(--text-dim)"> — {{ p.poste or '—' }} chez {{ p.entreprise or '—' }}</span>
-                <div style="color:var(--text-dim); font-size:12.5px; margin-top:2px">{{ p.email }}</div>
-            </div>
-            <a href="/prospect/{{ p.id }}" style="font-size:12.5px; white-space:nowrap">voir la fiche</a>
-        </div>
+{% if not avec_brouillon and not sans_brouillon %}
+<div class="vide">
+    Aucun prospect qualifié avec email en attente d'envoi.<br>
+    <a href="/">Qualifie des prospects</a> d'abord, ou <a href="/ajouter">ajoutes-en</a>.
+</div>
+{% endif %}
 
-        {% if p.brouillon %}
-            <div style="margin-top:18px">
-                <div class="brouillon-objet">Objet : {{ p.brouillon.objet }}</div>
-                <div class="brouillon-corps">{{ p.brouillon.corps }}</div>
-                <form class="inline" method="post" action="/envoi/{{ p.id }}/envoyer">
-                    <button type="submit" class="succes">✅ Envoyer</button>
-                </form>
-                <form class="inline" method="post" action="/envoi/{{ p.id }}/passer">
-                    <button type="submit" class="danger">Passer</button>
-                </form>
-                <form class="inline" method="post" action="/envoi/{{ p.id }}/generer">
-                    <button type="submit">🔄 Regénérer</button>
-                </form>
-            </div>
-        {% else %}
-            <div style="margin-top:16px">
-                <form method="post" action="/envoi/{{ p.id }}/generer">
-                    <button type="submit" class="primaire">✍️ Générer le brouillon</button>
-                </form>
-            </div>
-        {% endif %}
+{% for p in avec_brouillon %}
+<div class="carte carte-email" id="carte-{{ p.id }}">
+    <div class="tete">
+        <div class="qui">
+            {{ p.prenom }} {{ p.nom }}
+            <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}
+                {% if p.score_qualification is not none %} · score {{ p.score_qualification }}{% endif %}</small>
+        </div>
+        <a href="/prospect/{{ p.id }}">fiche</a>
     </div>
-    {% endfor %}
-{% else %}
-<div class="empty">
-    Aucun prospect qualifié avec un email en attente d'envoi.<br>
-    <a href="/">Lance la qualification</a> si tu as des prospects "nouveau" en attente.
+    <div class="corps-zone">
+        <input class="objet" value="{{ p.brouillon.objet }}" placeholder="Objet">
+        <textarea class="corps">{{ p.brouillon.corps }}</textarea>
+    </div>
+    <div class="pied">
+        <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
+        <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
+        <button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'initial'}, this)">Regénérer</button>
+        <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
+    </div>
+</div>
+{% endfor %}
+
+{% if sans_brouillon %}
+<div class="carte">
+    <h2>Sans brouillon ({{ sans_brouillon|length }})</h2>
+    <p class="aide">Le bouton en haut les génère tous d'un coup (dans la limite du quota du jour). Ou génère-les un par un ci-dessous.</p>
+    <div class="table-englobe">
+    <table>
+        <thead><tr><th>Nom</th><th>Entreprise</th><th>Score</th><th></th></tr></thead>
+        <tbody>
+        {% for p in sans_brouillon %}
+        <tr>
+            <td><a href="/prospect/{{ p.id }}">{{ p.prenom }} {{ p.nom }}</a></td>
+            <td>{{ p.entreprise or '—' }}</td>
+            <td class="mono">{{ p.score_qualification if p.score_qualification is not none else '—' }}</td>
+            <td><button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'initial'}, this)">Générer</button></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
 </div>
 {% endif %}
 {% endblock %}

@@ -1,13 +1,35 @@
 {% extends "base.html" %}
+{% block title %}Paramètres{% endblock %}
 {% block content %}
-<h1>Paramètres</h1>
-<div class="sub">Ce qui pilote la qualification et la rédaction des emails.</div>
+<div class="entete-page">
+    <div>
+        <h1>Paramètres</h1>
+        <div class="sous-titre">Tout ce qui pilote la qualification, la rédaction et les limites d'envoi — par profil.</div>
+    </div>
+</div>
+
+<div class="carte">
+    <h2>Profils</h2>
+    <p class="aide">
+        Un profil = une offre + une cible (ex : <span class="mono">sammpo</span> aujourd'hui,
+        ton projet médical demain). Chaque profil a son ICP et son ton d'email,
+        et chaque prospect appartient au profil actif au moment de son ajout.
+        Le profil actif se change dans la barre latérale.
+    </p>
+    <form method="post" action="/parametres/nouveau-profil" style="margin-top:12px">
+        <div class="rangee-boutons">
+            <input type="text" name="nom" placeholder="nom du nouveau profil (ex : medical)" required
+                   pattern="[a-z0-9_-]+" title="minuscules, chiffres, tirets et underscores uniquement" style="max-width:320px">
+            <button type="submit" class="primaire">Créer le profil</button>
+        </div>
+    </form>
+</div>
 
 <div class="grille-2">
     <div class="carte">
-        <h2 style="margin-top:0">Ce qu'on vend, et à qui (ICP)</h2>
+        <h2>Ce qu'on vend, et à qui (ICP du profil actif)</h2>
         <form method="post" action="/parametres/icp">
-            <label for="produit_nom">Nom du produit</label>
+            <label for="produit_nom">Nom du produit / service</label>
             <input type="text" id="produit_nom" name="produit_nom" value="{{ icp.produit.nom }}">
 
             <label for="produit_description">Description</label>
@@ -16,33 +38,36 @@
             <label for="proposition_valeur">Proposition de valeur</label>
             <textarea id="proposition_valeur" name="proposition_valeur" rows="3">{{ icp.produit.proposition_de_valeur }}</textarea>
 
-            <label for="secteurs">Secteurs ciblés <span style="font-weight:400">(un par ligne)</span></label>
+            <label for="secteurs">Secteurs ciblés <span class="aide">(un par ligne)</span></label>
             <textarea id="secteurs" name="secteurs" rows="4">{{ icp.cible.secteurs | join('\n') }}</textarea>
 
-            <label for="taille_entreprise">Taille d'entreprise ciblée <span style="font-weight:400">(un par ligne)</span></label>
+            <label for="taille_entreprise">Taille d'entreprise <span class="aide">(un par ligne)</span></label>
             <textarea id="taille_entreprise" name="taille_entreprise" rows="2">{{ icp.cible.taille_entreprise | join('\n') }}</textarea>
 
-            <label for="postes">Postes ciblés <span style="font-weight:400">(un par ligne)</span></label>
+            <label for="postes">Postes ciblés <span class="aide">(un par ligne)</span></label>
             <textarea id="postes" name="postes" rows="4">{{ icp.cible.postes | join('\n') }}</textarea>
 
-            <label for="signaux_achat">Signaux d'achat <span style="font-weight:400">(un par ligne)</span></label>
+            <label for="zones">Zones géographiques <span class="aide">(un par ligne)</span></label>
+            <textarea id="zones" name="zones" rows="2">{{ icp.cible.zones_geographiques | join('\n') }}</textarea>
+
+            <label for="signaux_achat">Signaux d'achat <span class="aide">(un par ligne)</span></label>
             <textarea id="signaux_achat" name="signaux_achat" rows="4">{{ icp.cible.signaux_achat | join('\n') }}</textarea>
 
-            <label for="exclusions">Exclusions <span style="font-weight:400">(un par ligne)</span></label>
+            <label for="exclusions">Exclusions <span class="aide">(un par ligne)</span></label>
             <textarea id="exclusions" name="exclusions" rows="3">{{ icp.exclusions | join('\n') }}</textarea>
 
             <label for="seuil">Seuil de qualification (0-100)</label>
             <input type="number" id="seuil" name="seuil" min="0" max="100" value="{{ icp.seuil_qualification }}">
 
-            <div style="margin-top:16px">
-                <button type="submit" class="primaire">Enregistrer</button>
+            <div class="rangee-boutons" style="margin-top:16px">
+                <button type="submit" class="primaire">Enregistrer l'ICP</button>
             </div>
         </form>
     </div>
 
     <div>
         <div class="carte">
-            <h2 style="margin-top:0">Ton des emails</h2>
+            <h2>Ton des emails (profil actif)</h2>
             <form method="post" action="/parametres/brief">
                 <label for="ton">Ton</label>
                 <textarea id="ton" name="ton" rows="3">{{ brief.ton }}</textarea>
@@ -59,21 +84,38 @@
                 <label for="mention">Mention légale obligatoire (désinscription)</label>
                 <textarea id="mention" name="mention" rows="2">{{ brief.mention_obligatoire }}</textarea>
 
-                <div style="margin-top:16px">
-                    <button type="submit" class="primaire">Enregistrer</button>
+                <div class="rangee-boutons" style="margin-top:16px">
+                    <button type="submit" class="primaire">Enregistrer le ton</button>
                 </div>
             </form>
         </div>
 
         <div class="carte">
-            <h2 style="margin-top:0">Connexion Gmail</h2>
+            <h2>Limites et relances</h2>
+            <form method="post" action="/parametres/reglages">
+                <label for="limite_envois_jour">Envois max par jour (premiers emails + relances)</label>
+                <input type="number" id="limite_envois_jour" name="limite_envois_jour" min="1" max="200" value="{{ reglages.limite_envois_jour }}">
+
+                <label for="delai_relance_jours">Relancer après (jours sans réponse)</label>
+                <input type="number" id="delai_relance_jours" name="delai_relance_jours" min="1" max="60" value="{{ reglages.delai_relance_jours }}">
+
+                <label for="max_relances">Nombre max de relances par prospect</label>
+                <input type="number" id="max_relances" name="max_relances" min="0" max="5" value="{{ reglages.max_relances }}">
+
+                <div class="rangee-boutons" style="margin-top:16px">
+                    <button type="submit" class="primaire">Enregistrer les réglages</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="carte">
+            <h2>Connexion Gmail</h2>
             <p class="aide">
-                Vérifie que l'envoi/lecture d'emails fonctionne. Si ce n'est
-                pas encore autorisé, un onglet de navigateur va s'ouvrir
-                pour te le demander.
+                Vérifie que la lecture/envoi fonctionne. Au tout premier
+                lancement, un onglet s'ouvre pour l'autorisation Google.
             </p>
-            <form method="post" action="/parametres/tester-gmail" style="margin-top:14px">
-                <button type="submit">📧 Tester la connexion Gmail</button>
+            <form method="post" action="/parametres/tester-gmail" style="margin-top:12px">
+                <button type="submit">Tester la connexion Gmail</button>
             </form>
         </div>
     </div>

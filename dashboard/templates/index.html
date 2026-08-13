@@ -1,60 +1,103 @@
 {% extends "base.html" %}
+{% block title %}Pipeline — Prospection{% endblock %}
 {% block content %}
-<h1>Pipeline de prospection</h1>
-<div class="sub">{{ total }} prospect(s) au total{% if filtre_actif %} — filtré sur "{{ filtre_actif }}"{% endif %}</div>
 
-<div class="actions-rapides">
-    <form method="post" action="/actions/qualifier">
-        <button type="submit" class="primaire">🔎 Qualifier les nouveaux prospects</button>
-    </form>
-    <form method="post" action="/actions/verifier-emails">
-        <button type="submit">📬 Vérifier les réponses email</button>
-    </form>
-    <a href="/envoi" class="btn">✉️ Rédiger &amp; envoyer les emails</a>
+<div class="entete-page">
+    <div>
+        <h1>Pipeline</h1>
+        <p class="sous-titre">{{ total }} prospect(s) dans le profil « {{ profil_actif }} »</p>
+    </div>
+    <div class="rangee-boutons">
+        <button class="primaire" onclick="lancerJob('/api/jobs/qualifier', null, this)"
+                {% if not counts.get('nouveau') %}disabled title="Aucun prospect « nouveau »"{% endif %}>
+            Qualifier les nouveaux ({{ counts.get('nouveau', 0) }})
+        </button>
+        <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
+            Vérifier les réponses
+        </button>
+    </div>
 </div>
 
-<div class="funnel">
-    <a href="/" class="funnel-item {{ 'actif' if not filtre_actif }}">
-        <div class="count">{{ total }}</div>
-        <div class="label">Tous</div>
-    </a>
-    {% for statut in statuts %}
-    <a href="/?statut={{ statut }}" class="funnel-item {{ 'actif' if filtre_actif == statut }}">
-        <div class="count">{{ counts[statut] }}</div>
-        <div class="label">{{ statut }}</div>
-    </a>
-    {% endfor %}
+{% if cle_api_manquante %}
+<div class="avertissement">
+    ANTHROPIC_API_KEY n'est pas définie dans le fichier .env — la qualification
+    et la rédaction d'emails ne fonctionneront pas tant qu'elle n'y est pas.
+</div>
+{% endif %}
+
+{% if total %}
+<div class="pipeline">
+    <div class="pipeline-barre">
+        {% for s in statuts %}{% if counts.get(s) %}
+        <a href="/?statut={{ s }}" class="c-{{ s }}" style="flex-grow: {{ counts[s] }}"
+           title="{{ libelles[s] }} : {{ counts[s] }}">{{ counts[s] }}</a>
+        {% endif %}{% endfor %}
+    </div>
+    <div class="pipeline-legende">
+        <a href="/" class="{{ 'actif' if not filtre_actif }}">Tous</a>
+        {% for s in statuts %}
+        <a href="/?statut={{ s }}" class="{{ 'actif' if filtre_actif == s }}">
+            <span class="pastille c-{{ s }}"></span>{{ libelles[s] }} · {{ counts.get(s, 0) }}
+        </a>
+        {% endfor %}
+    </div>
 </div>
 
-{% if prospects %}
-<table>
+<div class="outils-table">
+    <div class="recherche">
+        <input type="text" placeholder="Chercher un nom, une entreprise, un poste…"
+               oninput="filtrerTable(this)" aria-label="Recherche">
+    </div>
+    <span class="compteur-vue"><span id="compteur-visible">{{ prospects | length }}</span> affiché(s)</span>
+</div>
+
+{% macro fleche(colonne) -%}
+    {%- if tri == colonne -%}<span class="fleche">{{ '▲' if ordre == 'asc' else '▼' }}</span>{%- endif -%}
+{%- endmacro %}
+{% macro lien_tri(colonne, libelle) -%}
+    <a href="/?tri={{ colonne }}&ordre={{ 'asc' if tri == colonne and ordre == 'desc' else 'desc' }}{% if filtre_actif %}&statut={{ filtre_actif }}{% endif %}">{{ libelle }} {{ fleche(colonne) }}</a>
+{%- endmacro %}
+
+<div class="table-englobe">
+<table id="table-prospects">
     <thead>
         <tr>
-            <th>Nom</th>
+            <th>{{ lien_tri('nom', 'Nom') }}</th>
+            <th>{{ lien_tri('entreprise', 'Entreprise') }}</th>
             <th>Poste</th>
-            <th>Entreprise</th>
-            <th>Statut</th>
-            <th>Score</th>
-            <th>Dernière action</th>
+            <th>{{ lien_tri('score_qualification', 'Score') }}</th>
+            <th>{{ lien_tri('statut', 'Statut') }}</th>
+            <th>{{ lien_tri('date_derniere_action', 'Dernière action') }}</th>
         </tr>
     </thead>
     <tbody>
         {% for p in prospects %}
-        <tr class="clickable" onclick="window.location='/prospect/{{ p.id }}'">
-            <td>{{ p.prenom }} {{ p.nom }}</td>
-            <td>{{ p.poste or '—' }}</td>
+        <tr data-recherche="{{ (p.prenom ~ ' ' ~ p.nom ~ ' ' ~ (p.entreprise or '') ~ ' ' ~ (p.poste or '') ~ ' ' ~ (p.email or '')) | lower }}"
+            onclick="if (event.target.tagName !== 'SELECT' && event.target.tagName !== 'OPTION') window.location='/prospect/{{ p.id }}'">
+            <td><strong>{{ p.prenom }} {{ p.nom }}</strong></td>
             <td>{{ p.entreprise or '—' }}</td>
-            <td><span class="badge {{ p.statut }}">{{ p.statut }}</span></td>
-            <td>{{ p.score_qualification if p.score_qualification is not none else '—' }}</td>
-            <td>{{ p.date_derniere_action or '—' }}</td>
+            <td class="silencieux">{{ p.poste or '—' }}</td>
+            <td><span class="score">{{ p.score_qualification if p.score_qualification is not none else '—' }}</span></td>
+            <td>
+                <select class="champ" style="width:auto; padding:3px 8px; font-size:12.5px"
+                        onchange="changerStatut({{ p.id }}, this)" aria-label="Statut">
+                    {% for s in statuts %}
+                    <option value="{{ s }}" {% if p.statut == s %}selected{% endif %}>{{ libelles[s] }}</option>
+                    {% endfor %}
+                </select>
+            </td>
+            <td class="silencieux">{{ (p.date_derniere_action or p.date_creation or '')[:16] }}</td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+</div>
+
 {% else %}
-<div class="empty">
-    Aucun prospect{% if filtre_actif %} avec ce statut{% endif %}.
-    {% if not filtre_actif %}<br><a href="/ajouter">Ajoute tes premiers prospects</a> pour commencer.{% endif %}
+<div class="vide">
+    Aucun prospect dans le profil « {{ profil_actif }} » pour le moment.<br><br>
+    <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
 </div>
 {% endif %}
+
 {% endblock %}

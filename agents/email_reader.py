@@ -1,21 +1,26 @@
 """
 Agent email — LECTURE SEULE.
 
-Rôle : pour chaque prospect en base ayant un email, chercher ses réponses
-dans Gmail, les faire classer par Claude (intéressé / pas intéressé /
-à relancer / désinscription / absence du bureau / autre), et écrire le
-résultat dans notre base. Ne modifie et n'envoie jamais rien sur Gmail —
-le scope OAuth utilisé (gmail.readonly) ne le permet techniquement pas.
+Rôle : chercher dans Gmail les réponses des prospects en base, les faire
+classer par Claude (intéressé / pas intéressé / à relancer / désinscription /
+absence du bureau / autre), et écrire le résultat dans notre base.
+Ne modifie et n'envoie jamais rien sur Gmail.
+
+Optimisation : au lieu d'une requête Gmail par prospect (lent quand la base
+grossit), les adresses sont regroupées par lots de 20 dans une seule requête
+`from:(a OR b OR ...)`, puis chaque message trouvé est rattaché à son
+prospect via l'en-tête expéditeur.
 
 Usage :
-    python -m agents.email_reader                  # scan tous les prospects avec email
-    python -m agents.email_reader --dry-run         # simule sans toucher Gmail ni l'API Claude
-    python -m agents.email_reader --test-connexion  # vérifie juste que l'OAuth Gmail fonctionne
+    python3 -m agents.email_reader                  # scan tous les prospects avec email
+    python3 -m agents.email_reader --dry-run         # simule sans toucher Gmail ni l'API Claude
+    python3 -m agents.email_reader --test-connexion  # vérifie juste que l'OAuth Gmail fonctionne
 """
 from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -25,7 +30,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
 
-MODEL = "claude-sonnet-5"
+# Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+
+TAILLE_LOT_GMAIL = 20  # adresses par requête Gmail groupée
 
 TOOL_CLASSIFICATION = {
     "name": "classifier_email",
@@ -59,7 +67,7 @@ TOOL_CLASSIFICATION = {
 
 # Catégories qui déclenchent une mise à jour automatique du statut.
 # a_relancer / absence_bureau / autre sont volontairement absentes : un
-# humain doit trancher, l'agent ne fait que remonter l'info (dans interactions).
+# humain doit trancher, l'agent ne fait que remonter l'info.
 CATEGORIE_VERS_STATUT = {
     "interesse": "repondu",
     "pas_interesse": "perdu",
@@ -114,6 +122,53 @@ def _fake_classification() -> dict:
     }
 
 
+def _extraire_adresse(champ_de: str) -> str:
+    """'Jean Dupont <jean@acme.com>' -> 'jean@acme.com' (minuscules)."""
+    m = re.search(r"<([^>]+)>", champ_de)
+    adresse = m.group(1) if m else champ_de
+    return adresse.strip().lower()
+
+
+def _lots(elements: list, taille: int):
+    for i in range(0, len(elements), taille):
+        yield elements[i:i + taille]
+
+
+def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
+    """Retourne [(prospect, email_dict)] pour tous les nouveaux messages reçus
+    des prospects, via des requêtes Gmail groupées par lots."""
+    par_adresse = {p["email"].strip().lower(): p for p in prospects if p.get("email")}
+    resultats = []
+    for lot in _lots(list(par_adresse.keys()), TAILLE_LOT_GMAIL):
+        query = "from:(" + " OR ".join(lot) + ")"
+        for m in gmail_client.search_messages(service, query=query, max_results=50):
+            if db.est_email_traite(m["id"]):
+                continue
+            contenu = gmail_client.get_message_content(service, m["id"])
+            prospect = par_adresse.get(_extraire_adresse(contenu.get("de", "")))
+            if prospect:
+                resultats.append((prospect, contenu))
+    return resultats
+
+
+def traiter_email(prospect: dict, email: dict, dry_run: bool = False, client=None) -> dict:
+    """Classe UN email et écrit le résultat en base. Brique utilisée par
+    run() (CLI) et par le job du dashboard."""
+    resultat = _fake_classification() if dry_run else classify_email(prospect, email, client)
+
+    nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
+    if nouveau_statut:
+        db.update_statut(prospect["id"], nouveau_statut)
+
+    db.add_interaction(
+        prospect["id"], "email_recu",
+        f"[{resultat['categorie']}] {resultat['raison']} -> {resultat['action_recommandee']}",
+    )
+    if not dry_run:
+        db.marquer_email_traite(email["id"], prospect["id"])
+    return resultat
+
+
 def _fake_email(prospect: dict) -> dict:
     return {
         "id": f"dry-run-{prospect['id']}",
@@ -137,41 +192,22 @@ def run(dry_run: bool = False, test_connexion: bool = False) -> None:
         print("Aucun prospect avec une adresse email en base.")
         return
 
-    service = None if dry_run else gmail_client.get_service()
+    if dry_run:
+        paires = [(p, _fake_email(p)) for p in prospects]
+    else:
+        service = gmail_client.get_service()
+        paires = collecter_nouveaux_emails(service, prospects)
+
     total_traites = 0
-
-    for p in prospects:
-        if dry_run:
-            emails = [_fake_email(p)]
-        else:
-            trouves = gmail_client.search_messages(service, query=f"from:{p['email']}", max_results=10)
-            emails = []
-            for m in trouves:
-                if db.est_email_traite(m["id"]):
-                    continue
-                emails.append(gmail_client.get_message_content(service, m["id"]))
-
-        for email in emails:
-            try:
-                resultat = _fake_classification() if dry_run else classify_email(p, email)
-
-                nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
-                if nouveau_statut:
-                    db.update_statut(p["id"], nouveau_statut)
-
-                db.add_interaction(
-                    p["id"], "email_recu",
-                    f"[{resultat['categorie']}] {resultat['raison']} -> {resultat['action_recommandee']}",
-                )
-                if not dry_run:
-                    db.marquer_email_traite(email["id"], p["id"])
-
-                total_traites += 1
-                marqueur = "🔴" if resultat["categorie"] == "desinscription" else "  "
-                print(f"{marqueur}[{p['id']}] {p.get('prenom','')} {p.get('nom','')} "
-                      f"- {resultat['categorie']} : {resultat['raison']}")
-            except Exception as exc:  # noqa: BLE001 - continuer sur les autres emails
-                print(f"  [{p['id']}] ERREUR sur email {email.get('id')} : {exc}", file=sys.stderr)
+    for prospect, email in paires:
+        try:
+            resultat = traiter_email(prospect, email, dry_run=dry_run)
+            total_traites += 1
+            marqueur = "🔴" if resultat["categorie"] == "desinscription" else "  "
+            print(f"{marqueur}[{prospect['id']}] {prospect.get('prenom','')} {prospect.get('nom','')} "
+                  f"- {resultat['categorie']} : {resultat['raison']}")
+        except Exception as exc:  # noqa: BLE001 - continuer sur les autres emails
+            print(f"  [{prospect['id']}] ERREUR sur email {email.get('id')} : {exc}", file=sys.stderr)
 
     print(f"\n{total_traites} email(s) classé(s).")
 

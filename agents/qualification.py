@@ -1,16 +1,14 @@
 """
 Agent de qualification.
 
-Rôle : lire les prospects au statut 'nouveau' dans la base, les comparer à
-l'ICP défini dans config/icp.yaml, et écrire un score + une décision
-qualifié/non-qualifié dans la base. Zéro appel externe risqué (pas de
-LinkedIn, pas d'email) : c'est pour ça que c'est le premier agent à
-construire.
+Rôle : lire les prospects au statut 'nouveau' du profil actif, les comparer
+à l'ICP du profil (config/profils/<profil>/icp.yaml), et écrire un score +
+une décision qualifié/non-qualifié dans la base.
 
 Usage :
-    python -m agents.qualification                 # qualifie tous les nouveaux prospects
-    python -m agents.qualification --dry-run        # teste le flux sans appeler l'API (réponse simulée)
-    python -m agents.qualification --prospect-id 3  # qualifie un seul prospect
+    python3 -m agents.qualification                 # qualifie tous les nouveaux prospects du profil actif
+    python3 -m agents.qualification --dry-run        # teste le flux sans appeler l'API (réponse simulée)
+    python3 -m agents.qualification --prospect-id 3  # qualifie un seul prospect
 """
 from __future__ import annotations
 
@@ -19,14 +17,15 @@ import os
 import sys
 from pathlib import Path
 
-import yaml
 from dotenv import load_dotenv
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import profils  # noqa: E402
 from db import database as db  # noqa: E402
 
-ICP_PATH = Path(__file__).parent.parent / "config" / "icp.yaml"
-MODEL = "claude-sonnet-5"
+# Identifiant de modèle de l'API Anthropic. Surchargeable via .env
+# (CLAUDE_MODEL=...) sans toucher au code.
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 
 TOOL_QUALIFICATION = {
     "name": "qualifier_prospect",
@@ -62,11 +61,6 @@ TOOL_QUALIFICATION = {
         "required": ["qualifie", "score", "raison", "signaux_positifs", "signaux_negatifs"],
     },
 }
-
-
-def load_icp(path: Path = ICP_PATH) -> dict:
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f)
 
 
 def build_prompt(prospect: dict, icp: dict) -> str:
@@ -129,8 +123,7 @@ def qualify_prospect(prospect: dict, icp: dict, client=None) -> dict:
 
 
 def _fake_qualification(prospect: dict, icp: dict) -> dict:
-    """Réponse simulée pour --dry-run : permet de tester toute la chaîne
-    (lecture DB -> prompt -> écriture DB) sans clé API ni coût."""
+    """Réponse simulée pour --dry-run : teste toute la chaîne sans clé API."""
     return {
         "qualifie": True,
         "score": 75,
@@ -140,41 +133,44 @@ def _fake_qualification(prospect: dict, icp: dict) -> dict:
     }
 
 
-def run(prospect_id: int | None = None, dry_run: bool = False) -> None:
-    icp = load_icp()
+def qualifier_un(prospect: dict, icp: dict, dry_run: bool = False, client=None) -> dict:
+    """Qualifie UN prospect et écrit le résultat en base. Retourne le résultat.
+    Brique de base utilisée par run() (CLI) et par le job du dashboard."""
+    resultat = _fake_qualification(prospect, icp) if dry_run else qualify_prospect(prospect, icp, client)
+    db.update_qualification(
+        prospect_id=prospect["id"],
+        qualifie=resultat["qualifie"],
+        score=resultat["score"],
+        raison=resultat["raison"],
+        signaux_positifs=resultat["signaux_positifs"],
+        signaux_negatifs=resultat["signaux_negatifs"],
+    )
+    return resultat
+
+
+def run(prospect_id: int | None = None, dry_run: bool = False, profil: str | None = None) -> None:
+    profil = profil or db.profil_actif()
+    icp = profils.load_icp(profil)
     if icp.get("produit", {}).get("nom") == "À DÉFINIR":
         print(
-            "⚠️  config/icp.yaml n'a pas encore été rempli avec ton produit réel.\n"
-            "   Les qualifications ne voudront rien dire tant que ce fichier "
-            "n'est pas personnalisé.\n",
+            f"⚠️  L'ICP du profil '{profil}' n'a pas encore été rempli.\n"
+            "   Les qualifications ne voudront rien dire tant que ce n'est pas fait.\n",
             file=sys.stderr,
         )
 
     if prospect_id is not None:
         prospects = [p for p in [db.get_prospect(prospect_id)] if p]
     else:
-        prospects = db.list_prospects(statut="nouveau")
+        prospects = db.list_prospects(statut="nouveau", profil=profil)
 
     if not prospects:
-        print("Aucun prospect à qualifier (statut 'nouveau').")
+        print(f"Aucun prospect à qualifier (statut 'nouveau', profil '{profil}').")
         return
 
-    print(f"{len(prospects)} prospect(s) à qualifier...")
+    print(f"{len(prospects)} prospect(s) à qualifier (profil '{profil}')...")
     for p in prospects:
         try:
-            if dry_run:
-                resultat = _fake_qualification(p, icp)
-            else:
-                resultat = qualify_prospect(p, icp)
-
-            db.update_qualification(
-                prospect_id=p["id"],
-                qualifie=resultat["qualifie"],
-                score=resultat["score"],
-                raison=resultat["raison"],
-                signaux_positifs=resultat["signaux_positifs"],
-                signaux_negatifs=resultat["signaux_negatifs"],
-            )
+            resultat = qualifier_un(p, icp, dry_run=dry_run)
             statut = "✅ QUALIFIÉ" if resultat["qualifie"] else "❌ non qualifié"
             print(f"  [{p['id']}] {p.get('prenom', '')} {p.get('nom', '')} "
                   f"({p.get('entreprise', '')}) -> {statut} (score {resultat['score']})")
@@ -187,6 +183,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Agent de qualification de prospects")
     parser.add_argument("--dry-run", action="store_true", help="simule sans appeler l'API")
     parser.add_argument("--prospect-id", type=int, default=None, help="ne qualifier qu'un seul prospect")
+    parser.add_argument("--profil", type=str, default=None, help="profil à utiliser (défaut : profil actif)")
     args = parser.parse_args()
 
     if not args.dry_run and not os.environ.get("ANTHROPIC_API_KEY"):
@@ -195,4 +192,4 @@ if __name__ == "__main__":
         sys.exit(1)
 
     db.init_db()
-    run(prospect_id=args.prospect_id, dry_run=args.dry_run)
+    run(prospect_id=args.prospect_id, dry_run=args.dry_run, profil=args.profil)
