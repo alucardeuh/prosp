@@ -140,18 +140,19 @@ trancher, regarde `interactions` pour voir ce que l'agent a remonté.
 une obligation légale, pas une option — voir le point RGPD/CPCE qu'on avait
 discuté au tout début.
 
-## Agent d'envoi (validation humaine obligatoire)
+## Agent d'envoi (email rédigé par Claude, validation humaine obligatoire)
 
-`agents/email_sender.py` prend chaque prospect qualifié, génère l'email
-depuis `config/template_prospection.yaml`, te l'affiche, et **n'envoie
-que si tu tapes explicitement "o"** à l'invite. Trois réponses possibles :
-`o` (envoie et passe au suivant), `n` (passe sans envoyer, le prospect
-reste `qualifie` pour une prochaine revue), `q` (arrête tout de suite).
+`agents/email_sender.py` prend chaque prospect qualifié et **fait rédiger
+l'email par Claude**, spécifiquement pour lui — pas un template avec des
+trous remplis, un texte différent à chaque fois, basé sur son profil réel
+(poste, secteur, notes, raison de qualification) + l'ICP + le brief de
+`config/email_brief.yaml`. Il te l'affiche, et **n'envoie que si tu tapes
+"o"**.
 
 ### Avant le premier envoi réel
 
-1. Remplis `config/template_prospection.yaml` avec ton vrai message. Le
-   script t'avertit si tu as laissé le placeholder.
+1. Relis (et ajuste si besoin) `config/email_brief.yaml` — c'est ce
+   fichier qui pilote le ton et la structure de ce que Claude va écrire.
 2. Si tu as déjà autorisé Gmail pour l'agent de lecture seule, **supprime
    `credentials/token.json`** et relance une commande — le scope a changé
    (ajout de `gmail.send`), il faut ré-autoriser.
@@ -159,7 +160,7 @@ reste `qualifie` pour une prochaine revue), `q` (arrête tout de suite).
 ### Usage
 
 ```bash
-python3 -m agents.email_sender --dry-run       # teste tout le flux, auto-validé, zéro envoi réel
+python3 -m agents.email_sender --dry-run       # teste tout le flux, zéro appel API réel
 python3 -m agents.email_sender --limit 5       # revue réelle, limitée à 5 prospects
 python3 -m agents.email_sender                 # revue réelle, tous les prospects qualifiés
 ```
@@ -198,57 +199,34 @@ dashboard — c'est un outil de suivi, pas encore de pilotage.
 le 5000 depuis Monterey et fait planter Flask dessus pour une raison qui
 n'a rien à voir avec le code.
 
-## Agent LinkedIn (validation humaine obligatoire, via GetSales)
+## LinkedIn — pas de code, utilise Octopus CRM directement
 
-`agents/linkedin_agent.py` prend chaque prospect qualifié ayant un lien
-LinkedIn, crée/met à jour le lead correspondant dans GetSales, t'affiche
-le message prévu, et **n'envoie que si tu confirmes**. Volontairement
-plus simple que l'agent email : pas de lecture ni de classification des
-réponses — tu gères ça toi-même dans GetSales/LinkedIn.
+Après discussion, LinkedIn n'a pas besoin d'être piloté depuis ce projet :
+tu veux juste insérer prénom/nom/entreprise dans un message fixe (pas de
+rédaction par Claude nécessaire), donc un outil no-code suffit largement
+et coûte moins cher qu'une intégration API sur mesure.
 
-### Configuration (4 identifiants à récupérer dans ton dashboard GetSales)
+Utilise **Octopus CRM** (~10-15$/mois selon le plan) directement depuis
+son interface : importe ta sélection de contacts, personnalise avec leurs
+variables prénom/nom/entreprise/poste, lance la campagne. Aucun lien avec
+ce projet — c'est volontaire, pour rester simple et pas cher.
 
-| Variable | Où le trouver |
-|---|---|
-| `GETSALES_HOST` | Page "API Keys" |
-| `GETSALES_API_KEY` | Page "API Keys" |
-| `GETSALES_LIST_UUID` | Page "Lists" > 3 points sur une liste > "Copy List ID" |
-| `GETSALES_SENDER_PROFILE_UUID` | Page "Sender Profiles" |
-
-### Avant le premier envoi réel
-
-Remplis `config/template_linkedin.yaml` avec ton vrai message (le script
-avertit si tu as laissé le placeholder).
-
-### Usage
-
-```bash
-python3 -m agents.linkedin_agent --dry-run       # teste tout le flux, zéro envoi réel
-python3 -m agents.linkedin_agent --limit 10       # revue réelle, limitée à 10 prospects
-python3 -m agents.linkedin_agent                  # revue réelle, jusqu'à 25 prospects par défaut
-```
-
-⚠️ Sans `--limit`, le script se plafonne lui-même à 25 prospects par
-lancement — c'est volontaire (montée en charge progressive, risque de
-restriction de compte LinkedIn). Augmente progressivement, pas d'un coup.
-
-⚠️ Point non vérifié empiriquement (à tester avec ton compte réel avant
-de lancer sur un vrai lot) : la doc GetSales ne précise pas si l'endpoint
-d'envoi gère aussi les contacts pas encore connectés (invitation) ou
-suppose une connexion déjà établie. Teste d'abord sur un contact que tu
-sais déjà connecté en 1er degré.
+Si un jour tu veux que la sélection des contacts LinkedIn soit pilotée par
+la qualification Claude (comme pour l'email), Unipile reste la bonne
+option technique pour une vraie intégration API — mais ce n'est plus le
+besoin actuel.
 
 ## Et après ?
 
-Dans l'ordre qu'on avait posé :
+Dans l'ordre qu'on avait posé au départ (adapté à ce qui s'est précisé en
+cours de route) :
 
 1. ✅ Schéma de base + agent qualification
 2. ✅ Agent email en lecture seule
-3. ✅ Agent email en envoi, avec validation humaine
-4. ✅ Agent LinkedIn, avec validation humaine (ce qu'on vient d'ajouter, via GetSales)
+3. ✅ Agent email en envoi, rédigé par Claude, avec validation humaine
+4. LinkedIn : géré hors-projet via Octopus CRM (pas de code nécessaire)
 5. ~~Agent réseaux sociaux~~ (pas nécessaire, d'après toi)
-6. ✅ Manager + dashboard (couvre qualification + email ; pas encore étendu à LinkedIn)
+6. ✅ Manager + dashboard (couvre qualification + email)
 
 Reste en option, pas construit : la synchronisation HubSpot (vue CRM en
-miroir de ce que fait Gmail — GetSales a sa propre intégration HubSpot
-native si tu préfères passer par là plutôt que par du code custom).
+miroir de ce que fait Gmail).

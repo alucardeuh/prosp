@@ -1,0 +1,34 @@
+# Brief de rédaction pour l'agent d'envoi email.
+#
+# Contrairement à un template classique, il n'y a pas de texte fixe avec
+# des variables à remplir : Claude RÉDIGE un email différent pour chaque
+# prospect, en s'appuyant sur ces directives + le profil du prospect +
+# l'ICP (config/icp.yaml). C'est la différence avec LinkedIn, où tu n'as
+# besoin que de prénom/nom/entreprise en variables simples.
+#
+# À AJUSTER : plus tu es précis ici sur le ton et la structure attendue,
+# moins tu auras besoin de corriger les emails générés à chaque revue.
+
+ton: >
+  Professionnel mais direct, pas de jargon marketing, pas de formules
+  toutes faites du type "j'espère que vous allez bien". Phrases courtes.
+
+longueur_max_mots: 150
+
+structure_attendue: >
+  Une accroche qui montre concrètement qu'on a fait nos devoirs sur CE
+  prospect précis — s'appuyer sur un élément réel de son profil (poste,
+  secteur, taille d'entreprise, ou la raison pour laquelle il a été
+  qualifié). Jamais une phrase générique qui pourrait s'appliquer à
+  n'importe qui. Puis la proposition de valeur SAMMPO adaptée à sa
+  situation. Puis un call-to-action clair : proposer un échange de
+  15-20 minutes.
+
+signature: |
+  Cordialement,
+  SAMMPO
+
+mention_obligatoire: >
+  Pour ne plus recevoir de message de notre part, répondez "STOP" à cet
+  email. (Obligatoire légalement — voir le point RGPD/CPCE discuté au
+  début du projet. Claude doit l'inclure dans chaque email généré.)
