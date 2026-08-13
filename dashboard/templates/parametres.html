@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Paramètres</h1>
+<div class="sub">Ce qui pilote la qualification et la rédaction des emails.</div>
+
+<div class="grille-2">
+    <div class="carte">
+        <h2 style="margin-top:0">Ce qu'on vend, et à qui (ICP)</h2>
+        <form method="post" action="/parametres/icp">
+            <label for="produit_nom">Nom du produit</label>
+            <input type="text" id="produit_nom" name="produit_nom" value="{{ icp.produit.nom }}">
+
+            <label for="produit_description">Description</label>
+            <textarea id="produit_description" name="produit_description" rows="4">{{ icp.produit.description }}</textarea>
+
+            <label for="proposition_valeur">Proposition de valeur</label>
+            <textarea id="proposition_valeur" name="proposition_valeur" rows="3">{{ icp.produit.proposition_de_valeur }}</textarea>
+
+            <label for="secteurs">Secteurs ciblés <span style="font-weight:400">(un par ligne)</span></label>
+            <textarea id="secteurs" name="secteurs" rows="4">{{ icp.cible.secteurs | join('\n') }}</textarea>
+
+            <label for="taille_entreprise">Taille d'entreprise ciblée <span style="font-weight:400">(un par ligne)</span></label>
+            <textarea id="taille_entreprise" name="taille_entreprise" rows="2">{{ icp.cible.taille_entreprise | join('\n') }}</textarea>
+
+            <label for="postes">Postes ciblés <span style="font-weight:400">(un par ligne)</span></label>
+            <textarea id="postes" name="postes" rows="4">{{ icp.cible.postes | join('\n') }}</textarea>
+
+            <label for="signaux_achat">Signaux d'achat <span style="font-weight:400">(un par ligne)</span></label>
+            <textarea id="signaux_achat" name="signaux_achat" rows="4">{{ icp.cible.signaux_achat | join('\n') }}</textarea>
+
+            <label for="exclusions">Exclusions <span style="font-weight:400">(un par ligne)</span></label>
+            <textarea id="exclusions" name="exclusions" rows="3">{{ icp.exclusions | join('\n') }}</textarea>
+
+            <label for="seuil">Seuil de qualification (0-100)</label>
+            <input type="number" id="seuil" name="seuil" min="0" max="100" value="{{ icp.seuil_qualification }}">
+
+            <div style="margin-top:16px">
+                <button type="submit" class="primaire">Enregistrer</button>
+            </div>
+        </form>
+    </div>
+
+    <div>
+        <div class="carte">
+            <h2 style="margin-top:0">Ton des emails</h2>
+            <form method="post" action="/parametres/brief">
+                <label for="ton">Ton</label>
+                <textarea id="ton" name="ton" rows="3">{{ brief.ton }}</textarea>
+
+                <label for="longueur">Longueur max (mots)</label>
+                <input type="number" id="longueur" name="longueur" value="{{ brief.longueur_max_mots }}">
+
+                <label for="structure">Structure attendue</label>
+                <textarea id="structure" name="structure" rows="5">{{ brief.structure_attendue }}</textarea>
+
+                <label for="signature">Signature</label>
+                <textarea id="signature" name="signature" rows="3">{{ brief.signature }}</textarea>
+
+                <label for="mention">Mention légale obligatoire (désinscription)</label>
+                <textarea id="mention" name="mention" rows="2">{{ brief.mention_obligatoire }}</textarea>
+
+                <div style="margin-top:16px">
+                    <button type="submit" class="primaire">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="carte">
+            <h2 style="margin-top:0">Connexion Gmail</h2>
+            <p class="aide">
+                Vérifie que l'envoi/lecture d'emails fonctionne. Si ce n'est
+                pas encore autorisé, un onglet de navigateur va s'ouvrir
+                pour te le demander.
+            </p>
+            <form method="post" action="/parametres/tester-gmail" style="margin-top:14px">
+                <button type="submit">📧 Tester la connexion Gmail</button>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

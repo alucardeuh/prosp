@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Ajouter des prospects</h1>
+<div class="sub">Un par un pour tester, ou en masse depuis un export HubSpot / Clay / Apollo.</div>
+
+<div class="grille-2">
+    <div class="carte">
+        <h2 style="margin-top:0">Import en masse (CSV)</h2>
+        <p class="aide">
+            Colonnes reconnues : prenom, nom, poste, entreprise, secteur,
+            taille_entreprise, linkedin_url, email, notes. Les colonnes
+            manquantes sont simplement ignorées.
+        </p>
+        <form method="post" action="/ajouter/csv" enctype="multipart/form-data">
+            <label for="fichier">Fichier CSV</label>
+            <input type="file" id="fichier" name="fichier" accept=".csv" required>
+            <div style="margin-top:16px">
+                <button type="submit" class="primaire">Importer</button>
+            </div>
+        </form>
+    </div>
+
+    <div class="carte">
+        <h2 style="margin-top:0">Ajouter un seul prospect</h2>
+        <form method="post" action="/ajouter/manuel">
+            <label for="prenom">Prénom</label>
+            <input type="text" id="prenom" name="prenom">
+
+            <label for="nom">Nom</label>
+            <input type="text" id="nom" name="nom">
+
+            <label for="poste">Poste</label>
+            <input type="text" id="poste" name="poste">
+
+            <label for="entreprise">Entreprise</label>
+            <input type="text" id="entreprise" name="entreprise">
+
+            <label for="secteur">Secteur</label>
+            <input type="text" id="secteur" name="secteur">
+
+            <label for="taille">Taille d'entreprise</label>
+            <input type="text" id="taille" name="taille" placeholder="ex : 50-200">
+
+            <label for="email">Email</label>
+            <input type="email" id="email" name="email">
+
+            <label for="linkedin">Lien LinkedIn</label>
+            <input type="text" id="linkedin" name="linkedin">
+
+            <label for="notes">Notes</label>
+            <textarea id="notes" name="notes" rows="2"></textarea>
+
+            <div style="margin-top:16px">
+                <button type="submit" class="primaire">Ajouter</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

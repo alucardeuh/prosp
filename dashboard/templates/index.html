@@ -3,6 +3,16 @@
 <h1>Pipeline de prospection</h1>
 <div class="sub">{{ total }} prospect(s) au total{% if filtre_actif %} — filtré sur "{{ filtre_actif }}"{% endif %}</div>
 
+<div class="actions-rapides">
+    <form method="post" action="/actions/qualifier">
+        <button type="submit" class="primaire">🔎 Qualifier les nouveaux prospects</button>
+    </form>
+    <form method="post" action="/actions/verifier-emails">
+        <button type="submit">📬 Vérifier les réponses email</button>
+    </form>
+    <a href="/envoi" class="btn">✉️ Rédiger &amp; envoyer les emails</a>
+</div>
+
 <div class="funnel">
     <a href="/" class="funnel-item {{ 'actif' if not filtre_actif }}">
         <div class="count">{{ total }}</div>
@@ -42,6 +52,9 @@
     </tbody>
 </table>
 {% else %}
-<div class="empty">Aucun prospect{% if filtre_actif %} avec ce statut{% endif %}.</div>
+<div class="empty">
+    Aucun prospect{% if filtre_actif %} avec ce statut{% endif %}.
+    {% if not filtre_actif %}<br><a href="/ajouter">Ajoute tes premiers prospects</a> pour commencer.{% endif %}
+</div>
 {% endif %}
 {% endblock %}

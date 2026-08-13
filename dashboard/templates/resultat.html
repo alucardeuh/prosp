@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block content %}
+<a href="/" class="back">&larr; Retour au tableau de bord</a>
+<h1>{{ titre }}</h1>
+<div class="sub">Ce que l'action vient de faire, tel qu'affiché par le programme.</div>
+<pre class="log">{{ log }}</pre>
+<a href="/" class="btn primaire" style="margin-top:16px; display:inline-block">Retour au tableau de bord</a>
+{% endblock %}

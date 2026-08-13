@@ -186,20 +186,47 @@ python3 -m manager              # cycle réel (nécessite ANTHROPIC_API_KEY)
 décision humaine (envoi ou suite à donner à une réponse) et te renvoie
 vers la bonne commande.
 
-## Dashboard (lecture seule)
+## Interface web (tout par clic, sans Terminal)
 
 ```bash
 python3 -m dashboard.app
 ```
 
-Puis ouvre **http://127.0.0.1:5001**. Vue du pipeline (compteurs par
-statut, cliquables pour filtrer) + liste des prospects + détail avec
-historique complet par prospect. Aucune écriture en base depuis le
-dashboard — c'est un outil de suivi, pas encore de pilotage.
+Puis ouvre **http://127.0.0.1:5001**. C'est le point d'entrée pensé pour
+que quelqu'un de pas à l'aise avec le Terminal puisse utiliser tout le
+système — la seule commande à taper est celle du dessus pour démarrer le
+serveur, tout le reste se fait par clic dans le navigateur.
 
 ⚠️ Le port est **5001**, pas 5000 : sur macOS, AirPlay Receiver squatte
 le 5000 depuis Monterey et fait planter Flask dessus pour une raison qui
 n'a rien à voir avec le code.
+
+⚠️ Cette interface ne tourne qu'en local (`127.0.0.1`) — jamais accessible
+depuis l'extérieur, pas de risque qu'un tiers y accède via le réseau.
+
+**Tableau de bord** (`/`) — funnel par statut, liste des prospects,
+et deux boutons d'action rapide : qualifier les nouveaux prospects,
+vérifier les réponses email.
+
+**Ajouter des prospects** (`/ajouter`) — formulaire pour en ajouter un à
+la main, ou import CSV en masse (remplace `scripts.cli` et
+`scripts.import_csv` pour qui préfère ne pas toucher au Terminal).
+
+**Envoyer des emails** (`/envoi`) — le cœur du système. Pour chaque
+prospect qualifié : un bouton "Générer le brouillon" (Claude rédige,
+recherche d'actualité incluse), puis "Envoyer" ou "Passer". Rien ne part
+sans le clic sur "Envoyer" — même garde-fou que la version Terminal,
+juste avec des boutons.
+
+**Paramètres** (`/parametres`) — modifier l'ICP (ce qu'on vend, à qui) et
+le ton des emails sans toucher aux fichiers YAML directement, plus un
+bouton pour tester la connexion Gmail (utile au tout premier lancement :
+un onglet de navigateur s'ouvre automatiquement pour l'autorisation).
+
+Les scripts en ligne de commande (`agents.qualification`,
+`agents.email_sender`, `manager.py`...) continuent de fonctionner comme
+avant — l'interface web les appelle directement, elle ne les remplace
+pas, elle ajoute juste un autre moyen d'y accéder.
 
 ## LinkedIn — pas de code, utilise Octopus CRM directement
 
