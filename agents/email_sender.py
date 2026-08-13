@@ -31,6 +31,17 @@ MODEL = "claude-sonnet-5"
 ICP_PATH = Path(__file__).parent.parent / "config" / "icp.yaml"
 BRIEF_PATH = Path(__file__).parent.parent / "config" / "email_brief.yaml"
 
+# Outil serveur Anthropic : Claude décide seul quand chercher, l'API
+# exécute la recherche et lui redonne les résultats — aucune clé
+# supplémentaire nécessaire, ça passe par la même ANTHROPIC_API_KEY.
+# Facturé à l'usage par Anthropic (faible coût par recherche, négligeable
+# au volume dont tu parles). Détails : https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-search-tool
+TOOL_WEB_SEARCH = {
+    "type": "web_search_20250305",
+    "name": "web_search",
+    "max_uses": 3,
+}
+
 TOOL_REDACTION = {
     "name": "rediger_email",
     "description": "Rédige un email de prospection personnalisé pour ce prospect précis.",
@@ -58,8 +69,20 @@ def load_brief(path: Path = BRIEF_PATH) -> dict:
 def build_prompt(prospect: dict, icp: dict, brief: dict) -> str:
     produit = icp.get("produit", {})
     return f"""Tu es un agent qui rédige des emails de prospection B2B
-personnalisés. Appelle l'outil `rediger_email` avec ton résultat, ne
-réponds jamais en texte libre.
+personnalisés.
+
+# Étape 1 — recherche (obligatoire avant de rédiger)
+Cherche sur le web une actualité récente et pertinente sur l'entreprise
+"{prospect.get('entreprise', '')}" (levée de fonds, recrutement clé,
+expansion, nouveau produit, résultats financiers, changement de
+direction...). N'utilise cette info QUE si elle est réelle et solide —
+ne mentionne jamais une actualité inventée ou incertaine. Si tu ne
+trouves rien de fiable, base-toi uniquement sur le profil du prospect
+ci-dessous, sans forcer une actualité qui n'existe pas.
+
+# Étape 2 — rédaction
+Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
+résultat final. Ne réponds jamais en texte libre à la fin.
 
 # Ce qu'on vend
 {produit.get('description', '')}
@@ -86,11 +109,13 @@ Raison de qualification (pourquoi ce prospect a été retenu) : {prospect.get('r
 
 Rédige un email qui montre concrètement qu'on connaît la situation de CE
 prospect précis — pas un email générique qui pourrait être envoyé à
-n'importe qui. Appuie-toi sur un détail réel de son profil ci-dessus."""
+n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
+sinon sur un détail réel de son profil ci-dessus."""
 
 
 def redact_email(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
-    """Appelle Claude pour rédiger l'email. Retourne {objet, corps}."""
+    """Appelle Claude pour rédiger l'email — recherche d'actualité incluse
+    avant la rédaction. Retourne {objet, corps}."""
     if client is None:
         import anthropic
 
@@ -98,15 +123,17 @@ def redact_email(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
 
     response = client.messages.create(
         model=MODEL,
-        max_tokens=1024,
-        tools=[TOOL_REDACTION],
-        tool_choice={"type": "tool", "name": "rediger_email"},
+        max_tokens=4096,
+        tools=[TOOL_WEB_SEARCH, TOOL_REDACTION],
         messages=[{"role": "user", "content": build_prompt(prospect, icp, brief)}],
     )
     for block in response.content:
         if block.type == "tool_use" and block.name == "rediger_email":
             return block.input
-    raise RuntimeError("L'API n'a pas retourné d'appel d'outil (réponse inattendue).")
+    raise RuntimeError(
+        "L'API n'a pas appelé rediger_email (elle a peut-être répondu en texte "
+        "libre après la recherche au lieu de finaliser l'email)."
+    )
 
 
 def _fake_redaction(prospect: dict) -> dict:

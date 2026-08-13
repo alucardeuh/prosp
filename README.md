@@ -140,22 +140,24 @@ trancher, regarde `interactions` pour voir ce que l'agent a remonté.
 une obligation légale, pas une option — voir le point RGPD/CPCE qu'on avait
 discuté au tout début.
 
-## Agent d'envoi (email rédigé par Claude, validation humaine obligatoire)
+## Agent d'envoi (email rédigé par Claude, recherche d'actualité incluse, validation humaine obligatoire)
 
 `agents/email_sender.py` prend chaque prospect qualifié et **fait rédiger
-l'email par Claude**, spécifiquement pour lui — pas un template avec des
-trous remplis, un texte différent à chaque fois, basé sur son profil réel
-(poste, secteur, notes, raison de qualification) + l'ICP + le brief de
-`config/email_brief.yaml`. Il te l'affiche, et **n'envoie que si tu tapes
-"o"**.
+l'email par Claude**, spécifiquement pour lui. Avant de rédiger, Claude
+**cherche sur le web une actualité récente et pertinente sur l'entreprise**
+du prospect (levée de fonds, recrutement clé, expansion...) et s'en sert
+si elle est réelle et solide — jamais d'actualité inventée. Il te montre
+le résultat, et **n'envoie que si tu tapes "o"**.
+
+La recherche passe par le même `ANTHROPIC_API_KEY` que le reste — pas de
+clé supplémentaire à récupérer. Facturée à l'usage par Anthropic, coût
+négligeable au volume dont tu parles (quelques dizaines de prospects à la
+fois).
 
 ### Avant le premier envoi réel
 
-1. Relis (et ajuste si besoin) `config/email_brief.yaml` — c'est ce
-   fichier qui pilote le ton et la structure de ce que Claude va écrire.
-2. Si tu as déjà autorisé Gmail pour l'agent de lecture seule, **supprime
-   `credentials/token.json`** et relance une commande — le scope a changé
-   (ajout de `gmail.send`), il faut ré-autoriser.
+Relis (et ajuste si besoin) `config/email_brief.yaml` — c'est ce fichier
+qui pilote le ton et la structure de ce que Claude va écrire.
 
 ### Usage
 
