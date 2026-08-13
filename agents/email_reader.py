@@ -141,8 +141,27 @@ def _lots(elements: list, taille: int):
 
 def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
     """Retourne [(prospect, email_dict)] pour tous les nouveaux messages reçus
-    des prospects, via des requêtes Gmail groupées par lots."""
-    par_adresse = {p["email"].strip().lower(): p for p in prospects if p.get("email")}
+    des prospects, via des requêtes Gmail groupées par lots.
+
+    Deux garde-fous essentiels :
+    - un message dont l'expéditeur est NOTRE PROPRE adresse d'envoi n'est
+      jamais une réponse de prospect (ça arrive en s'auto-testant avec la
+      même adresse pour l'envoi et la réception, ou simplement si un
+      prospect partage son adresse avec la nôtre par erreur de saisie) —
+      sans ce filtre, une requête `from:(...)` peut retomber sur tout
+      l'historique déjà envoyé depuis ce compte et le faire classer comme
+      autant de "réponses", ce qui gaspille des appels API pour rien.
+    - si plusieurs prospects partagent la même adresse email, on les
+      regroupe au lieu d'en écraser silencieusement un par l'autre : un
+      dict simple {email: prospect} ne garde que le dernier inséré."""
+    mon_adresse = gmail_client.get_my_email_address(service)
+
+    par_adresse: dict[str, list[dict]] = {}
+    for p in prospects:
+        email = (p.get("email") or "").strip().lower()
+        if email:
+            par_adresse.setdefault(email, []).append(p)
+
     resultats = []
     for lot in _lots(list(par_adresse.keys()), TAILLE_LOT_GMAIL):
         query = "from:(" + " OR ".join(lot) + ")"
@@ -150,8 +169,17 @@ def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
             if db.est_email_traite(m["id"]):
                 continue
             contenu = gmail_client.get_message_content(service, m["id"])
-            prospect = par_adresse.get(_extraire_adresse(contenu.get("de", "")))
-            if prospect:
+            expediteur = _extraire_adresse(contenu.get("de", ""))
+
+            if mon_adresse and expediteur == mon_adresse:
+                # Notre propre email (envoyé par nous, ou reçu en copie sur
+                # le même compte) — jamais une réponse. On le marque traité
+                # pour ne pas le re-scanner à chaque clic, sans jamais
+                # l'envoyer à Claude pour classification.
+                db.marquer_email_traite(m["id"], None)
+                continue
+
+            for prospect in par_adresse.get(expediteur, []):
                 resultats.append((prospect, contenu))
     return resultats
 

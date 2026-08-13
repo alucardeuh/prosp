@@ -77,6 +77,20 @@ def search_messages(service, query: str, max_results: int = 20) -> list[dict]:
     return result.get("messages", [])
 
 
+def get_my_email_address(service) -> str | None:
+    """Adresse du compte Gmail authentifié (celui qui envoie). Sert à ne
+    jamais confondre un email qu'on a NOUS-MÊMES envoyé (Sent, ou reçu en
+    copie en s'auto-testant avec la même adresse pour l'envoi et le test)
+    avec une vraie réponse de prospect — voir email_reader.collecter_nouveaux_emails.
+    Retourne None plutôt que de lever, pour ne jamais faire échouer tout un
+    scan à cause de ça (le scan continue simplement sans ce garde-fou)."""
+    try:
+        profil = service.users().getProfile(userId="me").execute()
+    except Exception:  # noqa: BLE001
+        return None
+    return (profil.get("emailAddress") or "").strip().lower() or None
+
+
 def get_message_content(service, message_id: str) -> dict:
     """Récupère et parse un message : expéditeur, sujet, date, corps texte."""
     msg = service.users().messages().get(userId="me", id=message_id, format="full").execute()

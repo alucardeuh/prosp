@@ -58,6 +58,8 @@ function masquerBandeau() {
 
 async function suivreJob(jobId) {
   jobEnCours = jobId;
+  const bouton = document.querySelector("#bandeau-job .annuler-job");
+  if (bouton) bouton.disabled = false;
   const minuterie = setInterval(async () => {
     let job;
     try {
@@ -71,11 +73,12 @@ async function suivreJob(jobId) {
       clearInterval(minuterie);
       jobEnCours = null;
       const erreurs = job.erreurs ? " (" + job.erreurs + " erreur(s), détail dans le bandeau)" : "";
-      toast(
-        job.etat === "termine" ? "Terminé : " + job.titre + erreurs : "Échec : " + job.titre,
-        job.etat === "termine" && !job.erreurs ? "succes" : "erreur"
-      );
-      setTimeout(() => { masquerBandeau(); location.reload(); }, job.erreurs || job.etat === "echec" ? 3500 : 1000);
+      let message, type;
+      if (job.etat === "annule") { message = "Annulé : " + job.titre + erreurs; type = "erreur"; }
+      else if (job.etat === "termine") { message = "Terminé : " + job.titre + erreurs; type = job.erreurs ? "erreur" : "succes"; }
+      else { message = "Échec : " + job.titre; type = "erreur"; }
+      toast(message, type);
+      setTimeout(() => { masquerBandeau(); location.reload(); }, job.etat === "termine" && !job.erreurs ? 1000 : 3500);
     }
   }, 900);
 }
@@ -86,6 +89,13 @@ async function lancerJob(url, corps, bouton) {
   const donnees = await action(url, corps);
   if (bouton) bouton.disabled = false;
   if (donnees && donnees.job_id) suivreJob(donnees.job_id);
+}
+
+async function annulerJobActif() {
+  if (!jobEnCours) return;
+  const bouton = document.querySelector("#bandeau-job .annuler-job");
+  if (bouton) bouton.disabled = true;
+  await action("/api/jobs/" + jobEnCours + "/annuler");
 }
 
 // À l'ouverture d'une page : si un job tourne déjà (autre onglet, retour
@@ -112,10 +122,17 @@ async function envoyerEmail(prospectId, bouton) {
   bouton.disabled = true;
   const donnees = await action("/api/prospects/" + prospectId + "/envoyer", donneesBrouillon(prospectId));
   if (donnees && donnees.ok) {
-    const carte = document.getElementById("carte-" + prospectId);
-    carte.style.opacity = "0.35";
-    carte.querySelectorAll("button, input, textarea").forEach((el) => (el.disabled = true));
     majQuota(donnees.quota_restant);
+    const carte = document.getElementById("carte-" + prospectId);
+    if (carte) {
+      // Avant : la carte restait affichée en entier (objet + corps toujours
+      // lisibles) jusqu'à ce qu'on change de page. Elle disparaît maintenant
+      // juste après confirmation d'envoi, comme "Passer".
+      carte.querySelectorAll("button, input, textarea").forEach((el) => (el.disabled = true));
+      carte.style.transition = "opacity 0.3s";
+      carte.style.opacity = "0";
+      setTimeout(() => carte.remove(), 320);
+    }
   } else {
     bouton.disabled = false;
   }

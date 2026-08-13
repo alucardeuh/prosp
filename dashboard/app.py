@@ -73,7 +73,7 @@ def _contexte_global():
         "tous_profils": profils.list_profils(),
         "statuts": STATUTS,
         "libelles": LIBELLES_STATUT,
-        "nb_a_envoyer": len([p for p in db.list_prospects(statut="qualifie", profil=profil) if p.get("email")]),
+        "nb_a_envoyer": db.count_qualifies_avec_email(profil),
         "nb_a_relancer": len(_relances_dues(profil)),
         "nb_repondu": counts.get("repondu", 0),
         "envois_jour": db.envois_du_jour(),
@@ -179,6 +179,7 @@ def parametres():
         "limite_envois_jour": db.get_reglage("limite_envois_jour"),
         "delai_relance_jours": db.get_reglage("delai_relance_jours"),
         "max_relances": db.get_reglage("max_relances"),
+        "max_recherches_web": db.get_reglage("max_recherches_web"),
     }
     return render_template("parametres.html", icp=icp, brief=brief,
                            reglages=reglages, actif="parametres")
@@ -197,6 +198,14 @@ def api_job(job_id: str):
 @app.route("/api/jobs/actif")
 def api_job_actif():
     return jsonify(jobs.job_actif() or {})
+
+
+@app.route("/api/jobs/<job_id>/annuler", methods=["POST"])
+def api_annuler_job(job_id: str):
+    ok = jobs.demander_annulation(job_id)
+    if not ok:
+        return jsonify({"erreur": "Job introuvable ou déjà terminé."}), 404
+    return jsonify({"ok": True, "message": "Annulation demandée — arrêt avant le prochain élément."})
 
 
 @app.route("/api/jobs/qualifier", methods=["POST"])
@@ -487,11 +496,18 @@ def parametres_brief():
 
 @app.route("/parametres/reglages", methods=["POST"])
 def parametres_reglages():
-    for cle, defaut in (("limite_envois_jour", 50), ("delai_relance_jours", 7), ("max_relances", 2)):
+    for cle, defaut, plafond in (
+        ("limite_envois_jour", 50, None),
+        ("delai_relance_jours", 7, None),
+        ("max_relances", 2, None),
+        ("max_recherches_web", 3, 5),
+    ):
         try:
             valeur = max(0, int(request.form.get(cle, defaut)))
         except ValueError:
             valeur = defaut
+        if plafond is not None:
+            valeur = min(valeur, plafond)
         db.set_reglage(cle, str(valeur))
     flash("Réglages enregistrés.", "succes")
     return redirect(url_for("parametres"))
@@ -547,8 +563,20 @@ def ajouter_csv():
     profil = db.profil_actif()
     ajoutes, ignores = 0, []
     try:
-        texte = io.TextIOWrapper(fichier.stream, encoding="utf-8-sig")
-        for row in csv_module.DictReader(texte):
+        # io.TextIOWrapper(fichier.stream, ...) plante sous Python < 3.11 :
+        # le flux interne de Flask (SpooledTemporaryFile) n'implémente
+        # .readable() que depuis 3.11, ce que TextIOWrapper exige. On lit
+        # donc les octets puis on décode nous-mêmes plutôt que d'envelopper
+        # le flux — un CSV de prospects ne pèse jamais assez lourd pour que
+        # ça pose un problème de mémoire.
+        contenu = fichier.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        flash("Le fichier ne semble pas être un CSV encodé en UTF-8 — "
+              "ré-enregistre-le en UTF-8 puis réessaie.", "erreur")
+        return redirect(url_for("ajouter"))
+
+    try:
+        for row in csv_module.DictReader(io.StringIO(contenu)):
             donnees = {k.strip(): v for k, v in row.items() if k and v}
             donnees["profil"] = profil
             donnees.setdefault("source", "import_csv")

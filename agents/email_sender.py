@@ -36,13 +36,24 @@ from integrations import gmail_client  # noqa: E402
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 
-# Outil serveur Anthropic : Claude décide seul quand chercher, l'API exécute
-# la recherche — aucune clé supplémentaire, même ANTHROPIC_API_KEY.
-TOOL_WEB_SEARCH = {
-    "type": "web_search_20250305",
-    "name": "web_search",
-    "max_uses": 3,
-}
+def _outil_recherche_web(max_uses: int) -> dict:
+    """Outil serveur Anthropic : Claude décide seul quand chercher, l'API
+    exécute la recherche — aucune clé supplémentaire, même ANTHROPIC_API_KEY.
+    max_uses vient du réglage 'max_recherches_web' (Paramètres), pas codé en
+    dur : chaque recherche coûte $10/1000 + le coût en tokens du contenu
+    rapporté, donc c'est un curseur à ajuster, pas une constante."""
+    return {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": max_uses,
+    }
+
+
+def _max_recherches_web() -> int:
+    try:
+        return max(0, int(db.get_reglage("max_recherches_web") or 3))
+    except (TypeError, ValueError):
+        return 3
 
 TOOL_REDACTION = {
     "name": "rediger_email",
@@ -58,12 +69,11 @@ TOOL_REDACTION = {
 }
 
 
-def build_prompt(prospect: dict, icp: dict, brief: dict) -> str:
+def build_prompt(prospect: dict, icp: dict, brief: dict, avec_recherche: bool = True) -> str:
     produit = icp.get("produit", {})
-    return f"""Tu es un agent qui rédige des emails de prospection B2B
-personnalisés.
 
-# Étape 1 — recherche (obligatoire avant de rédiger)
+    if avec_recherche:
+        bloc_redaction = f"""# Étape 1 — recherche (obligatoire avant de rédiger)
 Cherche sur le web une actualité récente et pertinente sur l'entreprise
 "{prospect.get('entreprise', '')}" (levée de fonds, recrutement clé,
 expansion, nouveau produit, résultats financiers, changement de
@@ -74,7 +84,19 @@ ci-dessous, sans forcer une actualité qui n'existe pas.
 
 # Étape 2 — rédaction
 Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
-résultat final. Ne réponds jamais en texte libre à la fin.
+résultat final. Ne réponds jamais en texte libre à la fin."""
+    else:
+        bloc_redaction = """# Rédaction
+La recherche web est désactivée pour cet envoi (réglage du profil dans
+Paramètres) : base-toi uniquement sur le profil du prospect ci-dessous,
+sans jamais inventer une actualité que tu n'as pas vérifiée. Appelle
+l'outil `rediger_email` avec ton résultat final. Ne réponds jamais en
+texte libre à la fin."""
+
+    return f"""Tu es un agent qui rédige des emails de prospection B2B
+personnalisés.
+
+{bloc_redaction}
 
 # Ce qu'on vend
 {produit.get('description', '')}
@@ -143,13 +165,16 @@ Relances déjà envoyées : {prospect.get('nb_relances', 0)}
 {brief.get('mention_obligatoire', '')}"""
 
 
-def _appeler_redaction(prompt: str, client=None, avec_recherche: bool = True) -> dict:
+def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> dict:
     if client is None:
         import anthropic
 
         client = anthropic.Anthropic()
 
-    tools = [TOOL_WEB_SEARCH, TOOL_REDACTION] if avec_recherche else [TOOL_REDACTION]
+    tools = [TOOL_REDACTION]
+    if max_recherches > 0:
+        tools = [_outil_recherche_web(max_recherches), TOOL_REDACTION]
+
     response = client.messages.create(
         model=MODEL,
         max_tokens=4096,
@@ -166,8 +191,12 @@ def _appeler_redaction(prompt: str, client=None, avec_recherche: bool = True) ->
 
 
 def redact_email(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
-    """Rédige l'email initial — recherche d'actualité incluse. Retourne {objet, corps}."""
-    return _appeler_redaction(build_prompt(prospect, icp, brief), client, avec_recherche=True)
+    """Rédige l'email initial. Fait de 0 à N recherches web selon le réglage
+    'max_recherches_web' (Paramètres, 0 = désactivé) — jamais codé en dur.
+    Retourne {objet, corps}."""
+    max_recherches = _max_recherches_web()
+    prompt = build_prompt(prospect, icp, brief, avec_recherche=max_recherches > 0)
+    return _appeler_redaction(prompt, client, max_recherches=max_recherches)
 
 
 def redact_relance(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
@@ -176,7 +205,7 @@ def redact_relance(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
     premier_email = derniere["contenu"] if derniere else ""
     return _appeler_redaction(
-        build_prompt_relance(prospect, icp, brief, premier_email), client, avec_recherche=False
+        build_prompt_relance(prospect, icp, brief, premier_email), client, max_recherches=0
     )
 
 

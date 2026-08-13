@@ -69,13 +69,29 @@ def _log(job_id: str, ligne: str) -> None:
         _JOBS[job_id]["log"].append(ligne)
 
 
+def demander_annulation(job_id: str) -> bool:
+    """Demande l'arrêt d'un job en cours. Ne peut pas interrompre l'appel
+    API déjà en vol pour l'élément courant (impossible à couper proprement
+    depuis l'extérieur), mais empêche tous les suivants de démarrer — donc
+    stoppe le gaspillage de tokens en quelques secondes plutôt qu'en laissant
+    tourner un job jusqu'au bout. Retourne False si le job est introuvable
+    ou déjà terminé."""
+    with _VERROU:
+        job = _JOBS.get(job_id)
+        if not job or job["etat"] != "en_cours":
+            return False
+        job["annulation_demandee"] = True
+    return True
+
+
 def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
     """Lance un job qui applique `traiter_un(element, log)` à chaque élément.
 
     - traiter_un(element, log) -> str | None : traite un élément, retourne
       une ligne de log (ou lève une exception, qui est loggée sans arrêter
       le job).
-    - terminer(log) -> str | None : optionnel, appelé à la fin.
+    - terminer(log) -> str | None : optionnel, appelé à la fin (seulement
+      si le job n'a pas été annulé en cours de route).
 
     Retourne l'id du job. Lève RuntimeError si un job tourne déjà.
     """
@@ -88,17 +104,23 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
         _JOBS[job_id] = {
             "id": job_id,
             "titre": titre,
-            "etat": "en_cours",       # en_cours | termine | echec
+            "etat": "en_cours",       # en_cours | termine | echec | annule
             "fait": 0,
             "total": len(elements),
             "log": [],
             "erreurs": 0,
+            "annulation_demandee": False,
             "demarre_a": datetime.now().strftime("%H:%M:%S"),
         }
 
     def _executer():
+        annule = False
         try:
             for element in elements:
+                with _VERROU:
+                    annule = _JOBS[job_id]["annulation_demandee"]
+                if annule:
+                    break
                 try:
                     ligne = traiter_un(element, lambda l: _log(job_id, l))
                     if ligne:
@@ -109,11 +131,15 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
                         _JOBS[job_id]["erreurs"] += 1
                 with _VERROU:
                     _JOBS[job_id]["fait"] += 1
-            if terminer:
-                ligne = terminer(lambda l: _log(job_id, l))
-                if ligne:
-                    _log(job_id, ligne)
-            _maj(job_id, etat="termine")
+            if annule:
+                _log(job_id, "⏹ Annulé — ce qui était déjà traité reste enregistré.")
+                _maj(job_id, etat="annule")
+            else:
+                if terminer:
+                    ligne = terminer(lambda l: _log(job_id, l))
+                    if ligne:
+                        _log(job_id, ligne)
+                _maj(job_id, etat="termine")
         except Exception as exc:  # noqa: BLE001 - échec global (ex : Gmail inaccessible)
             _log(job_id, f"❌ Échec du job : {exc}")
             _maj(job_id, etat="echec")

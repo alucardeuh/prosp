@@ -18,6 +18,12 @@ REGLAGES_DEFAUT = {
     "limite_envois_jour": "50",
     "delai_relance_jours": "7",
     "max_relances": "2",
+    # Nombre de recherches web autorisées par email INITIAL (les relances
+    # n'en font jamais, par design). 0 = recherche désactivée : Claude
+    # rédige uniquement à partir du profil du prospect. La recherche coûte
+    # $10/1000 recherches + le coût en tokens du contenu rapporté (parfois
+    # plusieurs milliers de tokens) — donc réglable plutôt qu'imposé.
+    "max_recherches_web": "3",
 }
 
 
@@ -31,6 +37,15 @@ def init_db(db_path: Path = DB_PATH) -> None:
     sur ces colonnes — sur une base plus ancienne, l'index planterait
     si la colonne n'existait pas encore."""
     with sqlite3.connect(db_path) as conn:
+        # Mode WAL : les lectures (navigation dans l'interface) ne sont plus
+        # bloquées pendant qu'un job en arrière-plan écrit en base (relance,
+        # brouillon, statut...). Sans ça, chaque écriture d'un job pouvait
+        # faire ramer une page ouverte au même moment. synchronous=NORMAL est
+        # le compagnon habituel du mode WAL : reste sûr contre un crash de
+        # l'appli (ce qui nous intéresse), juste pas contre une coupure de
+        # courant en pleine écriture — négligeable pour un usage perso.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
         tables = {row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
         if "prospects" in tables:
@@ -184,6 +199,19 @@ def counts_par_statut(profil: str | None = None, db_path: Path = DB_PATH) -> dic
         return {r["statut"]: r["n"] for r in rows}
 
 
+def count_qualifies_avec_email(profil: str, db_path: Path = DB_PATH) -> int:
+    """Nombre de prospects qualifiés avec un email, prêts pour /envoi. Un
+    COUNT SQL direct plutôt que charger toute la liste juste pour la compter
+    — utilisé pour le badge de la barre latérale, affiché sur CHAQUE page."""
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM prospects "
+            "WHERE statut = 'qualifie' AND profil = ? AND email IS NOT NULL AND email != ''",
+            (profil,),
+        ).fetchone()
+        return row["n"]
+
+
 def update_qualification(
     prospect_id: int,
     qualifie: bool,
@@ -297,7 +325,7 @@ def est_email_traite(message_id: str, db_path: Path = DB_PATH) -> bool:
         return row is not None
 
 
-def marquer_email_traite(message_id: str, prospect_id: int, db_path: Path = DB_PATH) -> None:
+def marquer_email_traite(message_id: str, prospect_id: int | None, db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute(
             "INSERT OR IGNORE INTO emails_traites (message_id, prospect_id) VALUES (?, ?)",
