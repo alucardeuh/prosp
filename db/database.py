@@ -24,16 +24,24 @@ REGLAGES_DEFAUT = {
 def init_db(db_path: Path = DB_PATH) -> None:
     """Crée la base et les tables si elles n'existent pas encore.
     Ajoute aussi les colonnes manquantes sur une base déjà existante
-    (migration légère, sans framework dédié — le projet est encore petit)."""
+    (migration légère, sans framework dédié — le projet est encore petit).
+
+    Ordre important : les colonnes manquantes sont ajoutées AVANT
+    d'exécuter schema.sql, parce que celui-ci contient des CREATE INDEX
+    sur ces colonnes — sur une base plus ancienne, l'index planterait
+    si la colonne n'existait pas encore."""
     with sqlite3.connect(db_path) as conn:
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+        if "prospects" in tables:
+            colonnes = {row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()}
+            if "getsales_lead_uuid" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN getsales_lead_uuid TEXT")
+            if "profil" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN profil TEXT NOT NULL DEFAULT 'sammpo'")
+            if "nb_relances" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN nb_relances INTEGER NOT NULL DEFAULT 0")
         conn.executescript(SCHEMA_PATH.read_text())
-        colonnes = {row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()}
-        if "getsales_lead_uuid" not in colonnes:
-            conn.execute("ALTER TABLE prospects ADD COLUMN getsales_lead_uuid TEXT")
-        if "profil" not in colonnes:
-            conn.execute("ALTER TABLE prospects ADD COLUMN profil TEXT NOT NULL DEFAULT 'sammpo'")
-        if "nb_relances" not in colonnes:
-            conn.execute("ALTER TABLE prospects ADD COLUMN nb_relances INTEGER NOT NULL DEFAULT 0")
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
         conn.commit()
