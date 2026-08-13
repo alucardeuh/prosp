@@ -26,6 +26,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Voir agents/qualification.py pour l'explication : ce module peut être
+# importé sans jamais passer par `if __name__ == "__main__"`, donc c'est
+# ici qu'il faut charger .env pour que CLAUDE_MODEL soit bien pris en compte.
+load_dotenv()
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
@@ -213,7 +218,6 @@ def run(dry_run: bool = False, test_connexion: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    load_dotenv()
     parser = argparse.ArgumentParser(description="Agent email (lecture seule)")
     parser.add_argument("--dry-run", action="store_true", help="simule sans toucher Gmail ni l'API Claude")
     parser.add_argument("--test-connexion", action="store_true", help="vérifie juste la connexion OAuth Gmail")

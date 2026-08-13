@@ -46,6 +46,14 @@ CREATE TABLE IF NOT EXISTS interactions (
     prospect_id  INTEGER NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
     type         TEXT NOT NULL,   -- email_envoye, relance_envoyee, email_recu, qualification, note, statut_manuel
     contenu      TEXT,
+
+    -- Renseigné uniquement pour email_envoye / relance_envoyee : permet à la
+    -- relance suivante de s'accrocher au même fil Gmail (threadId + en-tête
+    -- Message-ID RFC pour In-Reply-To/References) plutôt que d'arriver comme
+    -- un email tout neuf dans la boîte du prospect.
+    gmail_thread_id TEXT,
+    rfc_message_id  TEXT,
+
     date         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

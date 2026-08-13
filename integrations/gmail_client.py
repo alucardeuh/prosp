@@ -119,12 +119,44 @@ def _decode(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
 
 
-def send_message(service, to_email: str, subject: str, body_text: str) -> dict:
+def send_message(service, to_email: str, subject: str, body_text: str,
+                 thread_id: str | None = None, in_reply_to: str | None = None) -> dict:
     """Envoie un email texte brut. Ne fait AUCUNE vérification métier
     (validation humaine, désinscription...) — c'est la responsabilité de
-    l'appelant (agents/email_sender.py) de s'en assurer avant d'appeler ceci."""
+    l'appelant (agents/email_sender.py) de s'en assurer avant d'appeler ceci.
+
+    thread_id / in_reply_to (optionnels) rattachent l'email à un fil Gmail
+    existant — utilisé pour les relances, afin qu'elles arrivent comme la
+    suite du premier message plutôt que comme un email tout neuf dans la
+    boîte du prospect. in_reply_to doit être l'en-tête Message-ID (RFC) du
+    message auquel on répond, récupérable via get_rfc_message_id()."""
     message = MIMEText(body_text)
     message["to"] = to_email
     message["subject"] = subject
+    if in_reply_to:
+        message["In-Reply-To"] = in_reply_to
+        message["References"] = in_reply_to
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
-    return service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    body = {"raw": raw}
+    if thread_id:
+        body["threadId"] = thread_id
+    return service.users().messages().send(userId="me", body=body).execute()
+
+
+def get_rfc_message_id(service, message_id: str) -> str | None:
+    """Récupère l'en-tête Message-ID (RFC, ex: '<abc123@mail.gmail.com>') d'un
+    message qu'on vient d'envoyer — c'est cette valeur, pas l'id interne
+    Gmail, qu'il faut fournir en in_reply_to à la relance suivante. Une
+    requête légère (métadonnées seules, pas le corps). Retourne None si
+    indisponible plutôt que de faire échouer l'envoi qui vient de réussir."""
+    try:
+        msg = (
+            service.users()
+            .messages()
+            .get(userId="me", id=message_id, format="metadata", metadataHeaders=["Message-ID"])
+            .execute()
+        )
+    except Exception:  # noqa: BLE001 - un échec ici ne doit jamais faire perdre l'email déjà envoyé
+        return None
+    headers = {h["name"].lower(): h["value"] for h in msg.get("payload", {}).get("headers", [])}
+    return headers.get("message-id")

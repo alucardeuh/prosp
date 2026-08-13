@@ -37,9 +37,12 @@ from agents import qualification, email_reader  # noqa: E402
 STATUTS = ["nouveau", "qualifie", "disqualifie", "contacte", "repondu", "rdv", "perdu", "desinscrit"]
 
 
-def resume_pipeline() -> dict[str, int]:
-    """Nombre de prospects par statut — c'est l'état complet du pipeline."""
-    return {s: len(db.list_prospects(statut=s)) for s in STATUTS}
+def resume_pipeline(profil: str) -> dict[str, int]:
+    """Nombre de prospects par statut POUR CE PROFIL — c'est l'état complet
+    du pipeline. Filtré par profil, comme le fait le dashboard : sans ça,
+    dès qu'un deuxième profil (médical) existe, ce résumé mélangerait les
+    deux pipelines et donnerait une image trompeuse."""
+    return {s: len(db.list_prospects(statut=s, profil=profil)) for s in STATUTS}
 
 
 def afficher_resume(titre: str, resume: dict[str, int]) -> None:
@@ -62,20 +65,22 @@ def run(dry_run: bool = False) -> None:
         sys.exit(1)
 
     db.init_db()
+    profil = db.profil_actif()
 
     print("=" * 60)
-    print("CYCLE MANAGER")
+    print(f"CYCLE MANAGER — profil « {profil} »")
     print("=" * 60)
 
-    afficher_resume("État avant cycle", resume_pipeline())
+    afficher_resume("État avant cycle", resume_pipeline(profil))
 
     print("\n[1/2] Agent qualification...")
     try:
-        qualification.run(dry_run=dry_run)
+        qualification.run(dry_run=dry_run, profil=profil)
     except Exception as exc:  # noqa: BLE001 - un agent qui échoue ne doit pas bloquer l'autre
         print(f"  ❌ Agent qualification a échoué : {exc}", file=sys.stderr)
 
     print("\n[2/2] Agent email (lecture)...")
+    print("      (tous profils confondus : la boîte Gmail est partagée)")
     try:
         email_reader.run(dry_run=dry_run, test_connexion=False)
     except FileNotFoundError as exc:
@@ -83,7 +88,7 @@ def run(dry_run: bool = False) -> None:
     except Exception as exc:  # noqa: BLE001
         print(f"  ❌ Agent email (lecture) a échoué : {exc}", file=sys.stderr)
 
-    apres = resume_pipeline()
+    apres = resume_pipeline(profil)
     afficher_resume("État après cycle", apres)
 
     print()
@@ -99,7 +104,7 @@ def run(dry_run: bool = False) -> None:
     try:
         delai = int(db.get_reglage("delai_relance_jours") or 7)
         maxr = int(db.get_reglage("max_relances") or 2)
-        dues = len(db.prospects_a_relancer(db.profil_actif(), delai, maxr))
+        dues = len(db.prospects_a_relancer(profil, delai, maxr))
         if dues:
             print(f"👉 {dues} relance(s) due(s) — page /relances de l'interface.")
     except Exception:  # noqa: BLE001 - le résumé ne doit jamais faire planter le cycle

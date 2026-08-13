@@ -41,6 +41,12 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 conn.execute("ALTER TABLE prospects ADD COLUMN profil TEXT NOT NULL DEFAULT 'sammpo'")
             if "nb_relances" not in colonnes:
                 conn.execute("ALTER TABLE prospects ADD COLUMN nb_relances INTEGER NOT NULL DEFAULT 0")
+        if "interactions" in tables:
+            cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
+            if "gmail_thread_id" not in cols_int:
+                conn.execute("ALTER TABLE interactions ADD COLUMN gmail_thread_id TEXT")
+            if "rfc_message_id" not in cols_int:
+                conn.execute("ALTER TABLE interactions ADD COLUMN rfc_message_id TEXT")
         conn.executescript(SCHEMA_PATH.read_text())
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
@@ -228,11 +234,14 @@ def incrementer_relances(prospect_id: int, db_path: Path = DB_PATH) -> None:
         )
 
 
-def add_interaction(prospect_id: int, type_: str, contenu: str, db_path: Path = DB_PATH) -> None:
+def add_interaction(prospect_id: int, type_: str, contenu: str,
+                    gmail_thread_id: str | None = None, rfc_message_id: str | None = None,
+                    db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute(
-            "INSERT INTO interactions (prospect_id, type, contenu) VALUES (?, ?, ?)",
-            (prospect_id, type_, contenu),
+            "INSERT INTO interactions (prospect_id, type, contenu, gmail_thread_id, rfc_message_id) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (prospect_id, type_, contenu, gmail_thread_id, rfc_message_id),
         )
 
 
@@ -259,11 +268,23 @@ def derniere_interaction(prospect_id: int, type_: str, db_path: Path = DB_PATH) 
 def list_prospects_avec_email(db_path: Path = DB_PATH) -> list[dict]:
     """Prospects qu'on peut chercher dans Gmail (tous profils confondus :
     une réponse peut arriver même quand on travaille sur l'autre profil).
-    On exclut les désinscrits : une fois désinscrit, on arrête de regarder."""
+    On exclut les désinscrits : une fois désinscrit, on arrête de regarder.
+    On exclut aussi ceux qui n'ont jamais reçu d'email (statut 'nouveau',
+    'disqualifie') : ils ne peuvent techniquement pas avoir répondu à un
+    email jamais envoyé, ça ne sert qu'à gaspiller des requêtes Gmail
+    (et son quota journalier) sans jamais rien trouver pour eux. On se base
+    sur l'historique réel (EXISTS sur interactions) plutôt que sur le statut
+    courant, qui peut avoir été changé à la main entre-temps."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
-            "SELECT * FROM prospects WHERE email IS NOT NULL AND email != '' "
-            "AND statut != 'desinscrit'"
+            """SELECT * FROM prospects
+               WHERE email IS NOT NULL AND email != ''
+                 AND statut != 'desinscrit'
+                 AND EXISTS (
+                     SELECT 1 FROM interactions i
+                     WHERE i.prospect_id = prospects.id
+                       AND i.type IN ('email_envoye', 'relance_envoyee')
+                 )"""
         ).fetchall()
         return [dict(r) for r in rows]
 

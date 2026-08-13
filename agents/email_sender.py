@@ -23,6 +23,11 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Voir agents/qualification.py pour l'explication : ce module peut être
+# importé sans jamais passer par `if __name__ == "__main__"`, donc c'est
+# ici qu'il faut charger .env pour que CLAUDE_MODEL soit bien pris en compte.
+load_dotenv()
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import profils  # noqa: E402
 from db import database as db  # noqa: E402
@@ -220,17 +225,43 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
             "Réessaie demain ou ajuste la limite dans les paramètres."
         )
 
+    # Pour une relance : récupère le fil Gmail du premier email envoyé, pour
+    # que la relance arrive comme la suite de la conversation plutôt que
+    # comme un nouveau message isolé dans la boîte du prospect.
+    thread_id = rfc_id = None
+    if brouillon["type"] == "relance":
+        premier = db.derniere_interaction(prospect_id, "email_envoye")
+        if premier:
+            thread_id = premier.get("gmail_thread_id")
+            rfc_id = premier.get("rfc_message_id")
+
+    reponse_envoi = None
     if not dry_run:
         if service is None:
             service = gmail_client.get_service()
-        gmail_client.send_message(service, prospect["email"], brouillon["objet"], brouillon["corps"])
+        reponse_envoi = gmail_client.send_message(
+            service, prospect["email"], brouillon["objet"], brouillon["corps"],
+            thread_id=thread_id, in_reply_to=rfc_id,
+        )
+
+    # Fil du message qu'on vient d'envoyer. Pour un premier email, ça devient
+    # l'ancrage de TOUTES ses relances futures (elles cherchent toujours le
+    # fil du type 'email_envoye', qui n'existe qu'une fois par prospect) —
+    # le threadId Gmail reste valable pour tout le fil, même à la 2e ou 3e
+    # relance, donc elles atterrissent bien toutes au même endroit.
+    nouveau_thread_id = nouveau_rfc_id = None
+    if reponse_envoi:
+        nouveau_thread_id = reponse_envoi.get("threadId")
+        nouveau_rfc_id = gmail_client.get_rfc_message_id(service, reponse_envoi["id"])
 
     contenu_historique = f"Objet: {brouillon['objet']}\n\n{brouillon['corps']}"
     if brouillon["type"] == "relance":
-        db.add_interaction(prospect_id, "relance_envoyee", contenu_historique)
+        db.add_interaction(prospect_id, "relance_envoyee", contenu_historique,
+                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id)
         db.incrementer_relances(prospect_id)
     else:
-        db.add_interaction(prospect_id, "email_envoye", contenu_historique)
+        db.add_interaction(prospect_id, "email_envoye", contenu_historique,
+                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id)
         db.update_statut(prospect_id, "contacte")
     db.delete_brouillon(prospect_id)
     return brouillon
@@ -299,7 +330,6 @@ def run(dry_run: bool = False, limit: int | None = None, profil: str | None = No
 
 
 if __name__ == "__main__":
-    load_dotenv()
     parser = argparse.ArgumentParser(description="Agent d'envoi (email rédigé par Claude, validation humaine obligatoire)")
     parser.add_argument("--dry-run", action="store_true", help="simule tout sans Gmail ni API Claude")
     parser.add_argument("--limit", type=int, default=None, help="ne traiter que les N premiers prospects qualifiés")

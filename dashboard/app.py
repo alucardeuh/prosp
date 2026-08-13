@@ -27,6 +27,13 @@ import sys
 import tempfile
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Chargé avant les imports suivants : les agents lisent CLAUDE_MODEL dès
+# leur import (voir agents/qualification.py), donc .env doit déjà être en
+# place à ce moment-là, pas seulement plus bas dans `if __name__ == "__main__"`.
+load_dotenv()
+
 from flask import (
     Flask, abort, flash, jsonify, redirect, render_template, request, url_for,
 )
@@ -49,11 +56,11 @@ LIBELLES_STATUT = {
     "perdu": "Perdu", "desinscrit": "Désinscrit",
 }
 
-
-@app.before_request
-def _preparer():
-    db.init_db()
-    profils.init_profils()
+# Initialisation UNE SEULE FOIS au démarrage du process (import de ce module),
+# plutôt qu'à chaque requête via before_request : schema.sql et la migration
+# des profils n'ont aucune raison de retourner sur le disque à chaque clic.
+db.init_db()
+profils.init_profils()
 
 
 @app.context_processor
@@ -562,11 +569,8 @@ def ajouter_csv():
 
 
 if __name__ == "__main__":
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    db.init_db()
-    profils.init_profils()
+    # .env chargé et base/profils initialisés plus haut, au niveau du module
+    # (nécessaire dès l'import, pas seulement en lancement direct).
     print("Interface disponible sur http://127.0.0.1:5001")
     # threaded=True : indispensable pour que la page puisse interroger la
     # progression pendant qu'un job tourne dans un autre thread.

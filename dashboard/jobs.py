@@ -23,6 +23,26 @@ _VERROU = threading.Lock()
 # par double-clic et de payer deux fois les mêmes appels API.
 _JOB_EN_COURS = threading.Lock()
 
+# Nombre de jobs terminés conservés en mémoire. Sans plafond, _JOBS grossit
+# pour toujours tant que le process tourne (un job de plus à chaque clic sur
+# "Qualifier", "Générer les brouillons", etc.) — une vraie fuite mémoire à
+# l'usage quotidien, même si chacune est petite. Le job en cours n'est
+# jamais purgé, seulement les plus anciens déjà terminés.
+_JOBS_CONSERVES = 20
+
+
+def _purger_anciens_jobs() -> None:
+    with _VERROU:
+        if len(_JOBS) <= _JOBS_CONSERVES:
+            return
+        # _JOBS est un dict Python : l'ordre d'insertion est préservé, donc
+        # les premières clés sont les plus anciennes.
+        for job_id in list(_JOBS.keys()):
+            if len(_JOBS) <= _JOBS_CONSERVES:
+                break
+            if _JOBS[job_id]["etat"] != "en_cours":
+                del _JOBS[job_id]
+
 
 def get_job(job_id: str) -> dict | None:
     with _VERROU:
@@ -62,6 +82,7 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
     if not _JOB_EN_COURS.acquire(blocking=False):
         raise RuntimeError("Une action est déjà en cours — attends qu'elle se termine.")
 
+    _purger_anciens_jobs()
     job_id = uuid.uuid4().hex[:12]
     with _VERROU:
         _JOBS[job_id] = {

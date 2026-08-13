@@ -19,6 +19,12 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+# Chargé ici, AVANT de lire CLAUDE_MODEL ci-dessous : ce module peut être
+# importé (par le dashboard, par exemple) sans jamais passer par le bloc
+# `if __name__ == "__main__"` plus bas, donc c'est le seul endroit qui
+# garantit que la surcharge posée dans .env est bien prise en compte.
+load_dotenv()
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import profils  # noqa: E402
 from db import database as db  # noqa: E402
@@ -135,8 +141,27 @@ def _fake_qualification(prospect: dict, icp: dict) -> dict:
 
 def qualifier_un(prospect: dict, icp: dict, dry_run: bool = False, client=None) -> dict:
     """Qualifie UN prospect et écrit le résultat en base. Retourne le résultat.
-    Brique de base utilisée par run() (CLI) et par le job du dashboard."""
+    Brique de base utilisée par run() (CLI) et par le job du dashboard.
+
+    Le booléen 'qualifie' que Claude retourne n'est qu'indicatif : c'est le
+    score comparé au seuil configuré dans l'ICP (Paramètres) qui décide
+    vraiment, pour que ce réglage ait un effet mécanique garanti plutôt que
+    d'être une simple suggestion glissée dans le prompt. Sans ça, deux
+    prospects au même score pourraient finir dans des statuts différents
+    selon l'humeur du modèle, et changer le seuil dans Paramètres n'aurait
+    aucun effet réel."""
     resultat = _fake_qualification(prospect, icp) if dry_run else qualify_prospect(prospect, icp, client)
+    try:
+        seuil = int(icp.get("seuil_qualification", 60))
+    except (TypeError, ValueError):
+        seuil = 60
+    decision_seuil = resultat["score"] >= seuil
+    if decision_seuil != resultat["qualifie"]:
+        resultat["raison"] = (
+            f"{resultat['raison']} (seuil à {seuil} appliqué : "
+            f"{'qualifié' if decision_seuil else 'non qualifié'} au score {resultat['score']}.)"
+        )
+    resultat["qualifie"] = decision_seuil
     db.update_qualification(
         prospect_id=prospect["id"],
         qualifie=resultat["qualifie"],
@@ -179,7 +204,6 @@ def run(prospect_id: int | None = None, dry_run: bool = False, profil: str | Non
 
 
 if __name__ == "__main__":
-    load_dotenv()
     parser = argparse.ArgumentParser(description="Agent de qualification de prospects")
     parser.add_argument("--dry-run", action="store_true", help="simule sans appeler l'API")
     parser.add_argument("--prospect-id", type=int, default=None, help="ne qualifier qu'un seul prospect")
