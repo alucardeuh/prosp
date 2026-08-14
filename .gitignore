@@ -4,6 +4,6 @@ __pycache__/
 db/prospection.db
 db/prospection.db-*
 .venv/
-credentials/*.json
+credentials/
 .DS_Store
 **/.DS_Store

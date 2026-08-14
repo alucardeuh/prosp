@@ -17,6 +17,28 @@ import threading
 import uuid
 from datetime import datetime
 
+try:
+    import anthropic as _anthropic_sdk
+except ImportError:  # ne devrait jamais arriver (dépendance du projet), mais ne doit jamais faire planter jobs.py
+    _anthropic_sdk = None
+
+
+def _message_lisible(exc: Exception) -> str:
+    """Traduit les erreurs API Anthropic les plus courantes en message
+    clair et actionnable, plutôt que le dump technique brut de l'exception
+    (ex : "Error code: 401 - {'type': 'error', 'error': {...}}") — surtout
+    utile pour une clé invalide/absente, l'erreur la plus probable pour
+    quelqu'un qui découvre l'outil."""
+    if _anthropic_sdk:
+        if isinstance(exc, _anthropic_sdk.AuthenticationError):
+            return "Clé API Anthropic invalide ou expirée — vérifie-la dans Paramètres."
+        if isinstance(exc, _anthropic_sdk.RateLimitError):
+            return "Limite de débit API Anthropic atteinte — réessaie dans quelques instants."
+        if isinstance(exc, _anthropic_sdk.APIConnectionError):
+            return "Impossible de joindre l'API Anthropic — vérifie ta connexion internet."
+    return str(exc)
+
+
 _JOBS: dict[str, dict] = {}
 _VERROU = threading.Lock()
 # Un seul job à la fois : évite de lancer deux générations en parallèle
@@ -126,7 +148,7 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
                     if ligne:
                         _log(job_id, ligne)
                 except Exception as exc:  # noqa: BLE001 - un échec ne stoppe pas le lot
-                    _log(job_id, f"❌ {exc}")
+                    _log(job_id, f"❌ {_message_lisible(exc)}")
                     with _VERROU:
                         _JOBS[job_id]["erreurs"] += 1
                 with _VERROU:
@@ -141,7 +163,7 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
                         _log(job_id, ligne)
                 _maj(job_id, etat="termine")
         except Exception as exc:  # noqa: BLE001 - échec global (ex : Gmail inaccessible)
-            _log(job_id, f"❌ Échec du job : {exc}")
+            _log(job_id, f"❌ Échec du job : {_message_lisible(exc)}")
             _maj(job_id, etat="echec")
         finally:
             _JOB_EN_COURS.release()

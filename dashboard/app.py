@@ -350,7 +350,7 @@ def api_annuler_job(job_id: str):
 @app.route("/api/jobs/qualifier", methods=["POST"])
 def api_qualifier():
     if _cle_api_manquante():
-        return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
+        return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
     profil = db.profil_actif()
     icp = profils.load_icp(profil)
     nouveaux = db.list_prospects(statut="nouveau", profil=profil)
@@ -382,7 +382,7 @@ def api_generer_brouillons():
       leur statut de qualification — seul un désinscrit reste bloqué, dans
       tous les cas, à ce stade comme à l'envoi."""
     if _cle_api_manquante():
-        return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
+        return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
     donnees = request.get_json(silent=True) or {}
     type_ = donnees.get("type", "initial")
     niveau_recherche = donnees.get("niveau_recherche")
@@ -436,7 +436,7 @@ def api_generer_brouillons():
 @app.route("/api/prospects/<int:prospect_id>/generer", methods=["POST"])
 def api_generer_un(prospect_id: int):
     if _cle_api_manquante():
-        return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
+        return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
     prospect = db.get_prospect(prospect_id)
     if not prospect:
         return jsonify({"erreur": "Prospect introuvable."}), 404
@@ -464,7 +464,7 @@ def api_generer_un(prospect_id: int):
 @app.route("/api/jobs/verifier-emails", methods=["POST"])
 def api_verifier_emails():
     if _cle_api_manquante():
-        return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
+        return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
     profil = db.profil_actif()
     prospects = db.list_prospects_avec_email(profil)
     if not prospects:
