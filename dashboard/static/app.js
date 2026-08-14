@@ -2,6 +2,30 @@
    Tout passe par fetch : plus aucune action ne recharge la page à froid,
    et les actions longues affichent leur progression en direct. */
 
+// ---------------------------------------------------------------- thème clair/sombre
+
+function majBoutonTema() {
+  const sombre = document.documentElement.getAttribute("data-tema") === "sombre";
+  const bouton = document.querySelector(".bascule-tema");
+  if (!bouton) return;
+  bouton.querySelector(".icone-tema").textContent = sombre ? "☀️" : "🌙";
+  bouton.querySelector(".libelle-tema").textContent = sombre ? "Clair" : "Sombre";
+}
+
+function basculerTema() {
+  const sombre = document.documentElement.getAttribute("data-tema") === "sombre";
+  if (sombre) {
+    document.documentElement.removeAttribute("data-tema");
+    localStorage.removeItem("tema");
+  } else {
+    document.documentElement.setAttribute("data-tema", "sombre");
+    localStorage.setItem("tema", "sombre");
+  }
+  majBoutonTema();
+}
+
+document.addEventListener("DOMContentLoaded", majBoutonTema);
+
 // ---------------------------------------------------------------- toasts
 
 function toast(message, type) {

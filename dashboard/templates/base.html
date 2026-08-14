@@ -7,6 +7,15 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+    <script>
+        // Appliqué avant le premier rendu pour ne jamais montrer un flash du
+        // mauvais thème au chargement (impossible à faire depuis app.js,
+        // chargé trop tard une fois le CSS déjà peint).
+        (function () {
+            var t = localStorage.getItem("tema");
+            if (t === "sombre") document.documentElement.setAttribute("data-tema", "sombre");
+        })();
+    </script>
 </head>
 <body>
 
@@ -46,6 +55,10 @@
             <a href="/stats" class="{{ 'actif' if actif == 'stats' }}">Stats</a>
             <a href="/parametres" class="{{ 'actif' if actif == 'parametres' }}">Paramètres</a>
         </nav>
+
+        <button type="button" class="bascule-tema" onclick="basculerTema()" title="Basculer thème clair / sombre">
+            <span class="icone-tema">🌙</span> <span class="libelle-tema">Sombre</span>
+        </button>
 
         <div class="pied">
             <div class="quota-jour">
