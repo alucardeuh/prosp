@@ -1,0 +1,13 @@
+produit:
+  nom: À DÉFINIR
+  description: Décris ici ce que tu vends.
+  proposition_de_valeur: Décris ici la valeur concrète pour le client.
+cible:
+  secteurs: []
+  taille_entreprise: []
+  postes: []
+  zones_geographiques:
+  - France
+  signaux_achat: []
+exclusions: []
+seuil_qualification: 60
