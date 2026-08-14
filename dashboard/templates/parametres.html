@@ -9,8 +9,59 @@
 </div>
 
 <div class="carte">
-    <h2>Connexions</h2>
-    <p class="aide">Relie tes comptes une fois ici — les agents s'en servent ensuite automatiquement, sans rien toucher ailleurs.</p>
+    <h2>Clé API Anthropic <span class="aide" style="font-weight:400; text-transform:none; letter-spacing:0">— commune à tous les profils</span></h2>
+    <p class="aide">
+        Nécessaire pour que les agents fonctionnent (qualification, rédaction,
+        classement des réponses). Génère une clé sur
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a>
+        si tu n'en as pas encore. Enregistrée dans <span class="mono">.env</span>, active immédiatement — pas besoin de redémarrer l'app.
+    </p>
+    <div class="rangee-boutons" style="margin:10px 0">
+        <span class="pastille pastille-{{ 'ok' if anthropic.connecte else 'off' }}">
+            {{ 'Connectée (' ~ anthropic.cle_masquee ~ ')' if anthropic.connecte else 'Non définie' }}
+        </span>
+    </div>
+    <form method="post" action="/parametres/anthropic/cle">
+        <input type="password" name="cle" placeholder="sk-ant-...">
+        <div class="rangee-boutons" style="margin-top:10px">
+            <button type="submit" class="primaire">Enregistrer la clé</button>
+            {% if anthropic.connecte %}
+            <button type="submit" formaction="/parametres/anthropic/deconnecter" class="danger" onclick="return confirm('Retirer la clé API ? Plus aucun agent ne fonctionnera tant qu\'une nouvelle clé n\'est pas enregistrée.')">Retirer</button>
+            {% endif %}
+        </div>
+    </form>
+
+    <h3 style="margin-top:20px; font-size:14px">Modèles utilisés</h3>
+    <form method="post" action="/parametres/anthropic/modeles">
+        <div class="grille-fiche">
+            <div>
+                <label for="modele_redaction">Rédaction (qualité prioritaire)</label>
+                <input type="text" id="modele_redaction" name="modele_redaction" value="{{ anthropic.modele_redaction }}">
+            </div>
+            <div>
+                <label for="modele_rapide">Qualification &amp; classement (coût prioritaire)</label>
+                <input type="text" id="modele_rapide" name="modele_rapide" value="{{ anthropic.modele_rapide }}">
+            </div>
+        </div>
+        <p class="aide">
+            Par défaut : Sonnet pour la rédaction (c'est ce qui part chez un
+            vrai prospect, la qualité compte), Haiku pour la qualification et
+            le classement des réponses (tâches mécaniques, bien moins cher).
+        </p>
+        <div class="rangee-boutons" style="margin-top:10px">
+            <button type="submit" class="primaire">Enregistrer les modèles</button>
+        </div>
+    </form>
+</div>
+
+<div class="carte">
+    <h2>Connexions <span class="aide" style="font-weight:400; text-transform:none; letter-spacing:0">— profil « {{ profil_connexions }} »</span></h2>
+    <p class="aide">
+        Propres à ce profil : change de profil dans la barre latérale pour
+        connecter une autre boîte Gmail ou un autre compte HubSpot (utile si
+        SAMMPO et un profil médical n'utilisent pas les mêmes comptes).
+        Relie une fois ici — les agents s'en servent ensuite automatiquement.
+    </p>
     <div class="grille-2" style="margin-top:14px">
 
         <div class="carte-connexion">

@@ -40,7 +40,13 @@ from integrations import gmail_client  # noqa: E402
 # Même raisonnement que agents/qualification.py : classer une réponse
 # (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
 # rédaction — Haiku suffit, moitié prix. Surchargeable via CLAUDE_MODEL_RAPIDE.
-MODEL = os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
+# Même raisonnement que agents/qualification.py : classer une réponse
+# (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
+# rédaction — Haiku suffit, moitié prix. Lu à chaque appel pour qu'un
+# changement depuis Paramètres prenne effet sans redémarrage.
+# Surchargeable via CLAUDE_MODEL_RAPIDE.
+def _modele() -> str:
+    return os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
 
 TAILLE_LOT_GMAIL = 20  # adresses par requête Gmail groupée
 
@@ -111,7 +117,7 @@ def classify_email(prospect: dict, email: dict, client=None) -> tuple[dict, dict
         client = anthropic.Anthropic()
 
     response = client.messages.create(
-        model=MODEL,
+        model=_modele(),
         max_tokens=1024,
         tools=[TOOL_CLASSIFICATION],
         tool_choice={"type": "tool", "name": "classifier_email"},
@@ -219,22 +225,23 @@ def _fake_email(prospect: dict) -> dict:
     }
 
 
-def run(dry_run: bool = False, test_connexion: bool = False) -> None:
+def run(dry_run: bool = False, test_connexion: bool = False, profil: str | None = None) -> None:
+    profil = profil or db.profil_actif()
     if test_connexion:
-        service = gmail_client.get_service()
+        service = gmail_client.get_service(profil)
         messages = gmail_client.search_messages(service, query="", max_results=3)
-        print(f"Connexion Gmail OK. {len(messages)} message(s) récent(s) trouvé(s) dans la boîte.")
+        print(f"Connexion Gmail OK (profil « {profil} »). {len(messages)} message(s) récent(s) trouvé(s) dans la boîte.")
         return
 
-    prospects = db.list_prospects_avec_email()
+    prospects = db.list_prospects_avec_email(profil)
     if not prospects:
-        print("Aucun prospect avec une adresse email en base.")
+        print(f"Aucun prospect avec une adresse email en base (profil « {profil} »).")
         return
 
     if dry_run:
         paires = [(p, _fake_email(p)) for p in prospects]
     else:
-        service = gmail_client.get_service()
+        service = gmail_client.get_service(profil)
         paires = collecter_nouveaux_emails(service, prospects)
 
     total_traites = 0

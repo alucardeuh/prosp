@@ -60,23 +60,39 @@ sur le réseau.
 
 ## Connexions
 
-### Gmail
-Dépose le `client_secret.json` téléchargé depuis Google Cloud Console
-directement dans Paramètres (plus besoin de Finder/Terminal), puis clique
-« Connecter Gmail » — un onglet s'ouvre pour l'autorisation. Statut visible
-en un coup d'œil (identifiants manquants / prêt / connecté), bouton
-Déconnecter pour changer de compte.
+Tout se règle depuis **Paramètres**, rien à faire en Terminal après la
+toute première installation.
 
-### HubSpot
-Connexion par **token d'App privée** plutôt qu'un vrai bouton OAuth — un
-bouton OAuth demanderait d'enregistrer une app dans un compte développeur
-HubSpot séparé, une procédure lourde pensée pour publier une app à
-d'autres. L'App privée est le chemin que HubSpot recommande lui-même pour
-relier son propre compte à son propre outil :
+### Clé API Anthropic
+Commune à tous les profils. Colle ta clé (générée sur
+[console.anthropic.com](https://console.anthropic.com/settings/keys)) dans
+Paramètres → Clé API Anthropic — écrite dans `.env`, active immédiatement,
+pas besoin de redémarrer l'app. Les modèles utilisés (rédaction vs
+qualification/classement) sont réglables juste en dessous, avec les mêmes
+garanties d'effet immédiat.
+
+### Gmail et HubSpot — propres à CHAQUE profil
+SAMMPO et un profil médical n'utilisent probablement pas le même compte
+Gmail ni le même compte HubSpot — ces deux connexions sont donc **propres
+au profil actif**, pas globales. Change de profil dans la barre latérale
+avant de connecter, chaque profil garde les siennes séparément
+(`credentials/<profil>/` pour Gmail).
+
+**Gmail** : dépose le `client_secret.json` téléchargé depuis Google Cloud
+Console directement dans Paramètres, puis clique « Connecter Gmail » — un
+onglet s'ouvre pour l'autorisation. Statut visible en un coup d'œil
+(identifiants manquants / prêt / connecté), bouton Déconnecter pour changer
+de compte.
+
+**HubSpot** : connexion par **token d'App privée** plutôt qu'un vrai bouton
+OAuth — un bouton OAuth demanderait d'enregistrer une app dans un compte
+développeur HubSpot séparé, une procédure lourde pensée pour publier une
+app à d'autres. L'App privée est le chemin que HubSpot recommande lui-même
+pour relier son propre compte à son propre outil :
 
 1. Dans HubSpot : Réglages → Intégrations → Applications privées → Créer.
 2. Coche le scope `crm.objects.contacts.read`.
-3. Colle le token généré dans Paramètres → HubSpot.
+3. Colle le token généré dans Paramètres → HubSpot (profil actif).
 
 Une fois connecté, **« Importer les contacts »** lance un job qui récupère
 tous les contacts HubSpot (prénom/nom/poste/entreprise/email) et les ajoute
@@ -84,10 +100,15 @@ au profil actif — sans jamais créer de doublon si tu relances l'import plus
 tard (dédoublonnage par ID HubSpot, stocké comme champ personnalisé). Import
 à sens unique pour l'instant : rien n'est renvoyé vers HubSpot.
 
+*Tu avais déjà Gmail/HubSpot connectés avant cette version ? Ils sont
+rattachés automatiquement au profil `sammpo` au premier démarrage — rien à
+reconnecter.*
+
 ## Multi-profil
 
 Un **profil** = une offre + une cible : son ICP, son ton d'email, ses
-champs personnalisés, ses prospects. Tout vit dans `config/profils/<nom>/`.
+champs personnalisés, ses connexions Gmail/HubSpot, ses prospects. Tout vit
+dans `config/profils/<nom>/` (+ `credentials/<nom>/` pour Gmail).
 Le profil actif se change dans la barre latérale ; chaque prospect
 appartient au profil actif au moment de son ajout, et la qualification /
 rédaction utilisent toujours la config du profil du moment. Le **quota

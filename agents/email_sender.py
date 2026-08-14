@@ -42,7 +42,15 @@ from integrations import gmail_client  # noqa: E402
 # la fois plus récent ET moins cher que l'ancien défaut claude-sonnet-4-6 —
 # pas de compromis qualité/coût ici, juste une mise à jour. Surchargeable
 # via .env (CLAUDE_MODEL=...).
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
+# Modèle de rédaction : contrairement à la qualification et au classement
+# des réponses, ici la qualité du texte compte vraiment — c'est ce qui part
+# chez un vrai prospect. claude-sonnet-5 (dernière génération Sonnet) est à
+# la fois plus récent ET moins cher que l'ancien défaut claude-sonnet-4-6 —
+# pas de compromis qualité/coût ici, juste une mise à jour. Lu à CHAQUE
+# appel pour qu'un changement fait depuis Paramètres prenne effet tout de
+# suite, sans redémarrer l'app. Surchargeable via .env (CLAUDE_MODEL=...).
+def _modele() -> str:
+    return os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
 def _outil_recherche_web(max_uses: int) -> dict:
     """Outil serveur Anthropic : Claude décide seul quand chercher, l'API
@@ -295,7 +303,7 @@ def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherc
         tools = [_outil_recherche_web(max_recherches), TOOL_REDACTION]
 
     response = client.messages.create(
-        model=MODEL,
+        model=_modele(),
         max_tokens=4096,
         tools=tools,
         system=system,
@@ -434,7 +442,10 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
     reponse_envoi = None
     if not dry_run:
         if service is None:
-            service = gmail_client.get_service()
+            # Le profil du prospect, pas le profil "actif" dans l'interface au
+            # moment de l'appel : un envoi programmé part en arrière-plan,
+            # potentiellement pendant qu'un AUTRE profil est affiché à l'écran.
+            service = gmail_client.get_service(prospect.get("profil"))
         reponse_envoi = gmail_client.send_message(
             service, prospect["email"], brouillon["objet"], brouillon["corps"],
             thread_id=thread_id, in_reply_to=rfc_id,
@@ -505,7 +516,7 @@ def run(dry_run: bool = False, limit: int | None = None, profil: str | None = No
         print(f"Aucun prospect qualifié avec email en attente d'envoi (profil '{profil}').")
         return
 
-    service = None if dry_run else gmail_client.get_service()
+    service = None if dry_run else gmail_client.get_service(profil)
     envoyes, refuses = 0, 0
 
     for p in prospects:

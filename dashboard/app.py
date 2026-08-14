@@ -30,10 +30,48 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Chargé avant les imports suivants : les agents lisent CLAUDE_MODEL dès
-# leur import (voir agents/qualification.py), donc .env doit déjà être en
-# place à ce moment-là, pas seulement plus bas dans `if __name__ == "__main__"`.
+# Chargé avant les imports suivants : ANTHROPIC_API_KEY doit être disponible
+# dès que possible. Les modèles (CLAUDE_MODEL, CLAUDE_MODEL_RAPIDE) sont lus
+# à chaque appel API par les agents, pas seulement à l'import — un changement
+# fait depuis Paramètres prend donc effet sans redémarrer l'app.
 load_dotenv()
+
+ENV_PATH = Path(__file__).parent.parent / ".env"
+
+
+def _lire_env() -> dict[str, str]:
+    if not ENV_PATH.exists():
+        return {}
+    valeurs = {}
+    for ligne in ENV_PATH.read_text().splitlines():
+        ligne = ligne.strip()
+        if not ligne or ligne.startswith("#") or "=" not in ligne:
+            continue
+        cle, _, valeur = ligne.partition("=")
+        valeurs[cle.strip()] = valeur.strip()
+    return valeurs
+
+
+def _definir_env(cle: str, valeur: str) -> None:
+    """Écrit/remplace UNE variable dans .env sans toucher au reste du
+    fichier (commentaires, autres variables) — reconnaît aussi une ligne
+    commentée existante (ex : '# CLAUDE_MODEL=...' dans .env.example) et la
+    décommente plutôt que d'en ajouter une deuxième en double. Applique le
+    changement immédiatement au process en cours : pas besoin de redémarrer
+    l'app pour qu'il prenne effet."""
+    lignes = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    trouve = False
+    for i, ligne in enumerate(lignes):
+        nu = ligne.strip().lstrip("#").strip()
+        if nu.startswith(f"{cle}="):
+            lignes[i] = f"{cle}={valeur}"
+            trouve = True
+            break
+    if not trouve:
+        lignes.append(f"{cle}={valeur}")
+    ENV_PATH.write_text("\n".join(lignes) + "\n")
+    os.environ[cle] = valeur
+
 
 from flask import (
     Flask, abort, flash, jsonify, redirect, render_template, request, url_for,
@@ -89,6 +127,33 @@ def _reparer_collisions_champs_perso() -> None:
 
 _reparer_collisions_champs_perso()
 
+
+def _migrer_connexions_globales_vers_sammpo() -> None:
+    """Migration ponctuelle : avant cette version, Gmail et HubSpot étaient
+    connectés une seule fois pour toute l'app. Maintenant que chaque profil
+    a ses propres connexions, une connexion globale déjà en place est
+    rattachée au profil 'sammpo' (le tout premier profil, très probablement
+    celui déjà connecté) plutôt que d'obliger à tout reconnecter à zéro."""
+    ancien_secret = gmail_client.CREDS_DIR / "client_secret.json"
+    ancien_token = gmail_client.CREDS_DIR / "token.json"
+    if ancien_secret.exists() and not gmail_client.chemin_client_secret("sammpo").exists():
+        gmail_client.dossier_profil("sammpo").mkdir(parents=True, exist_ok=True)
+        ancien_secret.rename(gmail_client.chemin_client_secret("sammpo"))
+        print("Migration : identifiants Gmail rattachés au profil « sammpo ».", file=sys.stderr)
+    if ancien_token.exists() and not gmail_client.chemin_token("sammpo").exists():
+        gmail_client.dossier_profil("sammpo").mkdir(parents=True, exist_ok=True)
+        ancien_token.rename(gmail_client.chemin_token("sammpo"))
+        print("Migration : session Gmail rattachée au profil « sammpo ».", file=sys.stderr)
+
+    ancien_token_hubspot = db.get_reglage("hubspot_token")
+    if ancien_token_hubspot and not db.get_reglage("hubspot_token__sammpo"):
+        db.set_reglage("hubspot_token__sammpo", ancien_token_hubspot)
+        db.set_reglage("hubspot_token", "")
+        print("Migration : token HubSpot rattaché au profil « sammpo ».", file=sys.stderr)
+
+
+_migrer_connexions_globales_vers_sammpo()
+
 # Le planificateur tourne en tâche de fond dès le démarrage : vérifie toutes
 # les 30s s'il y a un envoi programmé arrivé à échéance (voir planificateur.py).
 planificateur.demarrer()
@@ -122,16 +187,16 @@ def _cle_api_manquante() -> bool:
     return not os.environ.get("ANTHROPIC_API_KEY")
 
 
-def _statut_gmail() -> dict:
-    if not gmail_client.CLIENT_SECRET_PATH.exists():
+def _statut_gmail(profil: str) -> dict:
+    if not gmail_client.chemin_client_secret(profil).exists():
         return {"etat": "sans_identifiants", "libelle": "Identifiants OAuth manquants"}
-    if not gmail_client.TOKEN_PATH.exists():
+    if not gmail_client.chemin_token(profil).exists():
         return {"etat": "pret", "libelle": "Prêt à autoriser"}
     return {"etat": "connecte", "libelle": "Connecté"}
 
 
-def _statut_hubspot() -> dict:
-    token = db.get_reglage("hubspot_token")
+def _statut_hubspot(profil: str) -> dict:
+    token = db.get_reglage(f"hubspot_token__{profil}")
     if not token:
         return {"etat": "non_connecte", "libelle": "Non connecté"}
     return {"etat": "token_enregistre", "libelle": "Token enregistré"}
@@ -245,9 +310,17 @@ def parametres():
         "max_relances": db.get_reglage("max_relances"),
         "max_recherches_web": niveau_defaut,
     }
+    cle_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
+    anthropic_config = {
+        "cle_masquee": (cle_anthropic[:10] + "…" + cle_anthropic[-4:]) if len(cle_anthropic) > 14 else ("(définie)" if cle_anthropic else ""),
+        "connecte": bool(cle_anthropic),
+        "modele_redaction": os.environ.get("CLAUDE_MODEL", "claude-sonnet-5"),
+        "modele_rapide": os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001"),
+    }
     return render_template("parametres.html", icp=icp, brief=brief, reglages=reglages,
                            niveaux_recherche=email_sender.NIVEAUX_RECHERCHE,
-                           statut_gmail=_statut_gmail(), statut_hubspot=_statut_hubspot(),
+                           statut_gmail=_statut_gmail(profil), statut_hubspot=_statut_hubspot(profil),
+                           profil_connexions=profil, anthropic=anthropic_config,
                            actif="parametres")
 
 
@@ -392,13 +465,14 @@ def api_generer_un(prospect_id: int):
 def api_verifier_emails():
     if _cle_api_manquante():
         return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
-    prospects = db.list_prospects_avec_email()
+    profil = db.profil_actif()
+    prospects = db.list_prospects_avec_email(profil)
     if not prospects:
-        return jsonify({"erreur": "Aucun prospect avec une adresse email en base."}), 400
+        return jsonify({"erreur": "Aucun prospect avec une adresse email en base pour ce profil."}), 400
 
     # La collecte Gmail se fait dans le job (elle peut être longue elle aussi).
     def traiter(etape, log):
-        service = gmail_client.get_service()
+        service = gmail_client.get_service(profil)
         paires = email_reader.collecter_nouveaux_emails(service, prospects)
         if not paires:
             return "Aucune nouvelle réponse trouvée dans Gmail."
@@ -638,12 +712,43 @@ def parametres_reglages():
     return redirect(url_for("parametres"))
 
 
+@app.route("/parametres/anthropic/cle", methods=["POST"])
+def parametres_anthropic_cle():
+    cle = request.form.get("cle", "").strip()
+    if not cle:
+        flash("Clé vide.", "erreur")
+        return redirect(url_for("parametres"))
+    _definir_env("ANTHROPIC_API_KEY", cle)
+    flash("Clé API Anthropic enregistrée — active immédiatement, pas besoin de redémarrer.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/anthropic/deconnecter", methods=["POST"])
+def parametres_anthropic_deconnecter():
+    _definir_env("ANTHROPIC_API_KEY", "")
+    flash("Clé API Anthropic retirée.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/anthropic/modeles", methods=["POST"])
+def parametres_anthropic_modeles():
+    modele = request.form.get("modele_redaction", "").strip()
+    modele_rapide = request.form.get("modele_rapide", "").strip()
+    if modele:
+        _definir_env("CLAUDE_MODEL", modele)
+    if modele_rapide:
+        _definir_env("CLAUDE_MODEL_RAPIDE", modele_rapide)
+    flash("Modèles enregistrés — actifs dès le prochain appel.", "succes")
+    return redirect(url_for("parametres"))
+
+
 @app.route("/parametres/tester-gmail", methods=["POST"])
 def parametres_tester_gmail():
+    profil = db.profil_actif()
     try:
-        service = gmail_client.get_service()
+        service = gmail_client.get_service(profil)
         messages = gmail_client.search_messages(service, query="", max_results=3)
-        flash(f"Connexion Gmail OK — {len(messages)} message(s) récent(s) trouvé(s).", "succes")
+        flash(f"Connexion Gmail OK (profil « {profil} ») — {len(messages)} message(s) récent(s) trouvé(s).", "succes")
     except Exception as exc:  # noqa: BLE001
         flash(f"Erreur de connexion Gmail : {exc}", "erreur")
     return redirect(url_for("parametres"))
@@ -653,7 +758,8 @@ def parametres_tester_gmail():
 def parametres_gmail_identifiants():
     """Upload direct du client_secret.json téléchargé depuis Google Cloud
     Console — évite d'avoir à le renommer et le déplacer soi-même dans
-    credentials/ via le Finder ou le Terminal."""
+    credentials/<profil>/ via le Finder ou le Terminal. Propre au profil actif."""
+    profil = db.profil_actif()
     fichier = request.files.get("fichier")
     if not fichier or fichier.filename == "":
         flash("Aucun fichier sélectionné.", "erreur")
@@ -669,42 +775,46 @@ def parametres_gmail_identifiants():
         flash(f"Fichier invalide : {exc}", "erreur")
         return redirect(url_for("parametres"))
 
-    gmail_client.CREDS_DIR.mkdir(exist_ok=True)
-    gmail_client.CLIENT_SECRET_PATH.write_text(json.dumps(contenu))
-    flash("Identifiants enregistrés — clique sur « Connecter Gmail » pour autoriser l'accès.", "succes")
+    gmail_client.dossier_profil(profil).mkdir(parents=True, exist_ok=True)
+    gmail_client.chemin_client_secret(profil).write_text(json.dumps(contenu))
+    flash(f"Identifiants enregistrés pour « {profil} » — clique sur « Connecter Gmail » pour autoriser l'accès.", "succes")
     return redirect(url_for("parametres"))
 
 
 @app.route("/parametres/gmail/deconnecter", methods=["POST"])
 def parametres_gmail_deconnecter():
-    gmail_client.TOKEN_PATH.unlink(missing_ok=True)
-    flash("Gmail déconnecté — reclique sur « Connecter Gmail » pour autoriser un autre compte.", "succes")
+    profil = db.profil_actif()
+    gmail_client.chemin_token(profil).unlink(missing_ok=True)
+    flash(f"Gmail déconnecté pour « {profil} » — reclique sur « Connecter Gmail » pour autoriser un autre compte.", "succes")
     return redirect(url_for("parametres"))
 
 
 @app.route("/parametres/hubspot/token", methods=["POST"])
 def parametres_hubspot_token():
+    profil = db.profil_actif()
     token = request.form.get("token", "").strip()
     if not token:
         flash("Token vide.", "erreur")
         return redirect(url_for("parametres"))
-    db.set_reglage("hubspot_token", token)
-    flash("Token HubSpot enregistré — teste la connexion pour vérifier qu'il fonctionne.", "succes")
+    db.set_reglage(f"hubspot_token__{profil}", token)
+    flash(f"Token HubSpot enregistré pour « {profil} » — teste la connexion pour vérifier qu'il fonctionne.", "succes")
     return redirect(url_for("parametres"))
 
 
 @app.route("/parametres/hubspot/deconnecter", methods=["POST"])
 def parametres_hubspot_deconnecter():
-    db.set_reglage("hubspot_token", "")
-    flash("HubSpot déconnecté.", "succes")
+    profil = db.profil_actif()
+    db.set_reglage(f"hubspot_token__{profil}", "")
+    flash(f"HubSpot déconnecté pour « {profil} ».", "succes")
     return redirect(url_for("parametres"))
 
 
 @app.route("/parametres/hubspot/tester", methods=["POST"])
 def parametres_hubspot_tester():
-    token = db.get_reglage("hubspot_token")
+    profil = db.profil_actif()
+    token = db.get_reglage(f"hubspot_token__{profil}")
     if not token:
-        flash("Aucun token HubSpot enregistré.", "erreur")
+        flash("Aucun token HubSpot enregistré pour ce profil.", "erreur")
         return redirect(url_for("parametres"))
     try:
         resultat = hubspot_client.tester_connexion(token)
@@ -717,10 +827,10 @@ def parametres_hubspot_tester():
 
 @app.route("/api/jobs/importer-hubspot", methods=["POST"])
 def api_importer_hubspot():
-    token = db.get_reglage("hubspot_token")
-    if not token:
-        return jsonify({"erreur": "Aucun token HubSpot enregistré."}), 400
     profil = db.profil_actif()
+    token = db.get_reglage(f"hubspot_token__{profil}")
+    if not token:
+        return jsonify({"erreur": "Aucun token HubSpot enregistré pour ce profil."}), 400
 
     # Le champ hubspot_id sert au dédoublonnage (pas d'URL LinkedIn fiable
     # venant de HubSpot) — créé une seule fois, silencieusement s'il existe déjà.

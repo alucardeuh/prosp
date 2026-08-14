@@ -35,7 +35,15 @@ from db import database as db  # noqa: E402
 # sortir un score) est une tâche mécanique de classification, pas de la
 # rédaction — Haiku fait aussi bien pour ce genre de tâche que Sonnet, à
 # environ la moitié du prix. Surchargeable via .env (CLAUDE_MODEL_RAPIDE=...).
-MODEL = os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
+# Modèle "rapide" : qualifier un prospect (comparer à une grille de critères,
+# sortir un score) est une tâche mécanique de classification, pas de la
+# rédaction — Haiku fait aussi bien pour ce genre de tâche que Sonnet, à
+# environ la moitié du prix. Lu à CHAQUE appel (pas mis en cache au chargement
+# du module) : un changement fait depuis Paramètres → Clé & modèles prend
+# effet tout de suite, sans redémarrer l'app. Surchargeable via .env
+# (CLAUDE_MODEL_RAPIDE=...).
+def _modele() -> str:
+    return os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
 
 TOOL_QUALIFICATION = {
     "name": "qualifier_prospect",
@@ -155,7 +163,7 @@ def qualify_prospect(prospect: dict, icp: dict, client=None) -> tuple[dict, dict
         client = anthropic.Anthropic()  # lit ANTHROPIC_API_KEY dans l'environnement
 
     response = client.messages.create(
-        model=MODEL,
+        model=_modele(),
         max_tokens=1024,
         tools=[TOOL_QUALIFICATION],
         tool_choice={"type": "tool", "name": "qualifier_prospect"},

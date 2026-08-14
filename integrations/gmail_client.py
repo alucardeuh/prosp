@@ -34,33 +34,55 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.send",
 ]
 CREDS_DIR = Path(__file__).parent.parent / "credentials"
-CLIENT_SECRET_PATH = CREDS_DIR / "client_secret.json"
-TOKEN_PATH = CREDS_DIR / "token.json"
 
 
-def get_service():
-    """Retourne un client Gmail API authentifié. Ouvre un navigateur pour
-    l'autorisation au tout premier lancement, puis réutilise le token
-    stocké (avec rafraîchissement automatique) ensuite."""
+def dossier_profil(profil: str) -> Path:
+    return CREDS_DIR / profil
+
+
+def chemin_client_secret(profil: str) -> Path:
+    return dossier_profil(profil) / "client_secret.json"
+
+
+def chemin_token(profil: str) -> Path:
+    return dossier_profil(profil) / "token.json"
+
+
+def get_service(profil: str | None = None):
+    """Retourne un client Gmail API authentifié POUR CE PROFIL — chaque
+    profil a ses propres identifiants (credentials/<profil>/), puisque
+    SAMMPO et un profil médical n'envoient pas forcément depuis la même
+    boîte. Ouvre un navigateur pour l'autorisation au tout premier
+    lancement de ce profil, puis réutilise le token stocké (avec
+    rafraîchissement automatique) ensuite. profil=None retombe sur le
+    profil actif — pratique en CLI, jamais utilisé par le dashboard qui
+    précise toujours explicitement quel profil."""
+    if profil is None:
+        from db import database as db
+        profil = db.profil_actif()
+
+    client_secret_path = chemin_client_secret(profil)
+    token_path = chemin_token(profil)
+
     creds = None
-    if TOKEN_PATH.exists():
-        creds = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+    if token_path.exists():
+        creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            if not CLIENT_SECRET_PATH.exists():
+            if not client_secret_path.exists():
                 raise FileNotFoundError(
-                    f"'{CLIENT_SECRET_PATH}' introuvable. Télécharge le fichier "
-                    "d'identifiants OAuth depuis Google Cloud Console (voir "
-                    "README.md) et place-le à cet endroit exact."
+                    f"'{client_secret_path}' introuvable. Dans Paramètres, section "
+                    f"Connexions du profil « {profil} », dépose le fichier d'identifiants "
+                    "OAuth téléchargé depuis Google Cloud Console."
                 )
-            flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET_PATH), SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_path), SCOPES)
             creds = flow.run_local_server(port=0)
 
-        CREDS_DIR.mkdir(exist_ok=True)
-        TOKEN_PATH.write_text(creds.to_json())
+        dossier_profil(profil).mkdir(parents=True, exist_ok=True)
+        token_path.write_text(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
 

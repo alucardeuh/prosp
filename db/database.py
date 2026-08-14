@@ -358,9 +358,10 @@ def derniere_interaction(prospect_id: int, type_: str, db_path: Path = DB_PATH) 
 
 # ---------------------------------------------------------------- emails
 
-def list_prospects_avec_email(db_path: Path = DB_PATH) -> list[dict]:
-    """Prospects qu'on peut chercher dans Gmail (tous profils confondus :
-    une réponse peut arriver même quand on travaille sur l'autre profil).
+def list_prospects_avec_email(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+    """Prospects de CE profil qu'on peut chercher dans Gmail — chaque profil
+    a sa propre boîte Gmail connectée, donc plus de raison de regarder tous
+    profils confondus comme avant.
     On exclut les désinscrits : une fois désinscrit, on arrête de regarder.
     On exclut aussi ceux qui n'ont jamais reçu d'email (statut 'nouveau',
     'disqualifie') : ils ne peuvent techniquement pas avoir répondu à un
@@ -371,13 +372,15 @@ def list_prospects_avec_email(db_path: Path = DB_PATH) -> list[dict]:
     with get_connection(db_path) as conn:
         rows = conn.execute(
             """SELECT * FROM prospects
-               WHERE email IS NOT NULL AND email != ''
+               WHERE profil = ?
+                 AND email IS NOT NULL AND email != ''
                  AND statut != 'desinscrit'
                  AND EXISTS (
                      SELECT 1 FROM interactions i
                      WHERE i.prospect_id = prospects.id
                        AND i.type IN ('email_envoye', 'relance_envoyee')
-                 )"""
+                 )""",
+            (profil,),
         ).fetchall()
         return [dict(r) for r in rows]
 

@@ -80,9 +80,9 @@ def run(dry_run: bool = False) -> None:
         print(f"  ❌ Agent qualification a échoué : {exc}", file=sys.stderr)
 
     print("\n[2/2] Agent email (lecture)...")
-    print("      (tous profils confondus : la boîte Gmail est partagée)")
+    print(f"      (boîte Gmail du profil « {profil} »)")
     try:
-        email_reader.run(dry_run=dry_run, test_connexion=False)
+        email_reader.run(dry_run=dry_run, test_connexion=False, profil=profil)
     except FileNotFoundError as exc:
         print(f"  ❌ Agent email (lecture) : {exc}", file=sys.stderr)
     except Exception as exc:  # noqa: BLE001
