@@ -18,6 +18,12 @@ REGLAGES_DEFAUT = {
     "limite_envois_jour": "50",
     "delai_relance_jours": "7",
     "max_relances": "2",
+    # Nombre de recherches web autorisées par email INITIAL (les relances
+    # n'en font jamais, par design). 0 = recherche désactivée : Claude
+    # rédige uniquement à partir du profil du prospect. La recherche coûte
+    # $10/1000 recherches + le coût en tokens du contenu rapporté (parfois
+    # plusieurs milliers de tokens) — donc réglable plutôt qu'imposé.
+    "max_recherches_web": "3",
 }
 
 

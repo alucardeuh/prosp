@@ -36,13 +36,24 @@ from integrations import gmail_client  # noqa: E402
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
 MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
 
-# Outil serveur Anthropic : Claude décide seul quand chercher, l'API exécute
-# la recherche — aucune clé supplémentaire, même ANTHROPIC_API_KEY.
-TOOL_WEB_SEARCH = {
-    "type": "web_search_20250305",
-    "name": "web_search",
-    "max_uses": 3,
-}
+def _outil_recherche_web(max_uses: int) -> dict:
+    """Outil serveur Anthropic : Claude décide seul quand chercher, l'API
+    exécute la recherche — aucune clé supplémentaire, même ANTHROPIC_API_KEY.
+    max_uses vient du réglage 'max_recherches_web' (Paramètres), pas codé en
+    dur : chaque recherche coûte $10/1000 + le coût en tokens du contenu
+    rapporté, donc c'est un curseur à ajuster, pas une constante."""
+    return {
+        "type": "web_search_20250305",
+        "name": "web_search",
+        "max_uses": max_uses,
+    }
+
+
+def _max_recherches_web() -> int:
+    try:
+        return max(0, int(db.get_reglage("max_recherches_web") or 3))
+    except (TypeError, ValueError):
+        return 3
 
 TOOL_REDACTION = {
     "name": "rediger_email",
@@ -58,12 +69,55 @@ TOOL_REDACTION = {
 }
 
 
-def build_prompt(prospect: dict, icp: dict, brief: dict) -> str:
-    produit = icp.get("produit", {})
-    return f"""Tu es un agent qui rédige des emails de prospection B2B
-personnalisés.
+# Règles d'écriture qui s'appliquent à TOUT email envoyé, quel que soit le
+# profil (SAMMPO, médical, ou un futur profil) — ce sont des règles de fond
+# sur la qualité et la délivrabilité du texte, pas des préférences de ton
+# négociables comme celles du brief. Définies une seule fois ici plutôt que
+# dans chaque email_brief.yaml pour ne jamais avoir à les dupliquer ou les
+# oublier sur un nouveau profil.
+REGLES_ECRITURE = """# Règles d'écriture (s'appliquent à TOUT email, sans exception)
 
-# Étape 1 — recherche (obligatoire avant de rédiger)
+## Délivrabilité
+Aucun mot ni tournure à risque spam : pas de "GRATUIT", "URGENT",
+majuscules intégrales, points d'exclamation multiples, ni excès de liens
+(un seul lien maximum, seulement s'il est vraiment utile).
+
+## Humaniser
+Phrases courtes, une idée par paragraphe, jamais de bloc dense. Aucun
+jargon marketing ("solution innovante", "leader du marché", "révolutionner
+votre..." sont interdits) — décris un problème concret, pas un
+argumentaire. Écris comme si tu démarrais une conversation avec une
+personne précise, pas comme si tu diffusais une annonce. Une formulation
+trop parfaite et trop symétrique se lit comme un template : préfère une
+tournure un peu plus directe et naturelle.
+
+## Objet (si tu dois en générer un)
+4 à 8 mots, spécifique à ce prospect précis plutôt que vendeur. Jamais de
+majuscules, ponctuation excessive ou emoji.
+
+## Une seule idée, une seule demande
+Un email = une idée, une question. Ne mélange jamais deux sujets ou deux
+demandes, même reformulées.
+
+## Le call to action
+Un seul CTA, à la toute fin, isolé dans sa propre phrase. Formule-le en
+question à faible engagement, facile à répondre en un mot ("Ça vous
+intéresse d'en discuter 15 minutes ?" plutôt qu'un lien de réservation ou
+une formule passive-vague comme "n'hésitez pas à me contacter").
+
+## Registre
+Vouvoiement systématique, sans exception. Professionnel et direct, jamais
+guindé : verbes actifs ("je vous propose" plutôt que "il serait
+envisageable de vous proposer"). Ne mélange jamais les registres dans un
+même email (pas d'humour au milieu d'un email factuel, pas de familiarité
+soudaine après un paragraphe formel)."""
+
+
+def build_prompt(prospect: dict, icp: dict, brief: dict, avec_recherche: bool = True) -> str:
+    produit = icp.get("produit", {})
+
+    if avec_recherche:
+        bloc_redaction = f"""# Étape 1 — recherche (obligatoire avant de rédiger)
 Cherche sur le web une actualité récente et pertinente sur l'entreprise
 "{prospect.get('entreprise', '')}" (levée de fonds, recrutement clé,
 expansion, nouveau produit, résultats financiers, changement de
@@ -74,7 +128,21 @@ ci-dessous, sans forcer une actualité qui n'existe pas.
 
 # Étape 2 — rédaction
 Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
-résultat final. Ne réponds jamais en texte libre à la fin.
+résultat final. Ne réponds jamais en texte libre à la fin."""
+    else:
+        bloc_redaction = """# Rédaction
+La recherche web est désactivée pour cet envoi (réglage du profil dans
+Paramètres) : base-toi uniquement sur le profil du prospect ci-dessous,
+sans jamais inventer une actualité que tu n'as pas vérifiée. Appelle
+l'outil `rediger_email` avec ton résultat final. Ne réponds jamais en
+texte libre à la fin."""
+
+    return f"""Tu es un agent qui rédige des emails de prospection B2B
+personnalisés.
+
+{bloc_redaction}
+
+{REGLES_ECRITURE}
 
 # Ce qu'on vend
 {produit.get('description', '')}
@@ -114,7 +182,9 @@ réponse — tu rédiges le suivi.
 Appelle l'outil `rediger_email` avec ton résultat. Ne réponds jamais en
 texte libre.
 
-# Règles d'une bonne relance
+{REGLES_ECRITURE}
+
+# Règles supplémentaires propres à la relance
 - BEAUCOUP plus courte que le premier email (60-80 mots maximum).
 - Fait naturellement référence au message précédent sans le paraphraser.
 - Apporte un angle NOUVEAU (un bénéfice concret, une question directe,
@@ -143,13 +213,16 @@ Relances déjà envoyées : {prospect.get('nb_relances', 0)}
 {brief.get('mention_obligatoire', '')}"""
 
 
-def _appeler_redaction(prompt: str, client=None, avec_recherche: bool = True) -> dict:
+def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> dict:
     if client is None:
         import anthropic
 
         client = anthropic.Anthropic()
 
-    tools = [TOOL_WEB_SEARCH, TOOL_REDACTION] if avec_recherche else [TOOL_REDACTION]
+    tools = [TOOL_REDACTION]
+    if max_recherches > 0:
+        tools = [_outil_recherche_web(max_recherches), TOOL_REDACTION]
+
     response = client.messages.create(
         model=MODEL,
         max_tokens=4096,
@@ -166,8 +239,12 @@ def _appeler_redaction(prompt: str, client=None, avec_recherche: bool = True) ->
 
 
 def redact_email(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
-    """Rédige l'email initial — recherche d'actualité incluse. Retourne {objet, corps}."""
-    return _appeler_redaction(build_prompt(prospect, icp, brief), client, avec_recherche=True)
+    """Rédige l'email initial. Fait de 0 à N recherches web selon le réglage
+    'max_recherches_web' (Paramètres, 0 = désactivé) — jamais codé en dur.
+    Retourne {objet, corps}."""
+    max_recherches = _max_recherches_web()
+    prompt = build_prompt(prospect, icp, brief, avec_recherche=max_recherches > 0)
+    return _appeler_redaction(prompt, client, max_recherches=max_recherches)
 
 
 def redact_relance(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
@@ -176,7 +253,7 @@ def redact_relance(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
     premier_email = derniere["contenu"] if derniere else ""
     return _appeler_redaction(
-        build_prompt_relance(prospect, icp, brief, premier_email), client, avec_recherche=False
+        build_prompt_relance(prospect, icp, brief, premier_email), client, max_recherches=0
     )
 
 

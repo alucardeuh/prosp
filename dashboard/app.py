@@ -179,6 +179,7 @@ def parametres():
         "limite_envois_jour": db.get_reglage("limite_envois_jour"),
         "delai_relance_jours": db.get_reglage("delai_relance_jours"),
         "max_relances": db.get_reglage("max_relances"),
+        "max_recherches_web": db.get_reglage("max_recherches_web"),
     }
     return render_template("parametres.html", icp=icp, brief=brief,
                            reglages=reglages, actif="parametres")
@@ -495,11 +496,18 @@ def parametres_brief():
 
 @app.route("/parametres/reglages", methods=["POST"])
 def parametres_reglages():
-    for cle, defaut in (("limite_envois_jour", 50), ("delai_relance_jours", 7), ("max_relances", 2)):
+    for cle, defaut, plafond in (
+        ("limite_envois_jour", 50, None),
+        ("delai_relance_jours", 7, None),
+        ("max_relances", 2, None),
+        ("max_recherches_web", 3, 5),
+    ):
         try:
             valeur = max(0, int(request.form.get(cle, defaut)))
         except ValueError:
             valeur = defaut
+        if plafond is not None:
+            valeur = min(valeur, plafond)
         db.set_reglage(cle, str(valeur))
     flash("Réglages enregistrés.", "succes")
     return redirect(url_for("parametres"))
