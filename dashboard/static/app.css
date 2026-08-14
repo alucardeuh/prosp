@@ -201,6 +201,34 @@ input:focus, textarea:focus, select.champ:focus { border-color: var(--pine); out
 }
 
 .table-englobe { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); overflow: auto; box-shadow: var(--shadow); }
+
+.filtres-selection { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+.filtres-selection input, .filtres-selection select { flex: 1; min-width: 160px; }
+#table-selection tbody tr { cursor: default; }
+#table-selection td:first-child, #table-selection th:first-child { width: 34px; text-align: center; }
+#table-selection input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
+
+.liste-champs-perso { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.champ-perso-ligne {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  padding: 8px 12px; font-size: 13.5px;
+}
+.champ-perso-ligne form { margin: 0; }
+.champ-perso-ligne button { padding: 3px 10px; font-size: 12px; }
+
+.carte-connexion {
+  background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+}
+.entete-connexion { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.entete-connexion h3 { margin: 0; font-size: 15px; font-family: var(--display); }
+.pastille {
+  font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  padding: 3px 9px; border-radius: 999px;
+}
+.pastille-ok { background: rgba(19, 94, 72, 0.12); color: var(--pine); }
+.pastille-attente { background: rgba(180, 112, 15, 0.14); color: var(--amber); }
+.pastille-off { background: rgba(27, 36, 32, 0.08); color: var(--faint); }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13.5px; white-space: nowrap; }
 th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); user-select: none; }

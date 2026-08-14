@@ -18,6 +18,7 @@ from __future__ import annotations
 import re
 import shutil
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -100,7 +101,7 @@ def list_profils() -> list[str]:
 
 def creer_profil(nom: str) -> str:
     """Crée un nouveau profil vierge. Retourne l'identifiant normalisé."""
-    identifiant = re.sub(r"[^a-z0-9_-]", "", nom.strip().lower().replace(" ", "-"))
+    identifiant = _identifiant_sur(nom)
     if not identifiant:
         raise ValueError("Nom de profil invalide.")
     dossier = PROFILS_DIR / identifiant
@@ -109,6 +110,7 @@ def creer_profil(nom: str) -> str:
     dossier.mkdir(parents=True, exist_ok=True)
     _ecrire_yaml(dossier / "icp.yaml", ICP_VIERGE)
     _ecrire_yaml(dossier / "email_brief.yaml", BRIEF_VIERGE)
+    _ecrire_yaml(dossier / "champs.yaml", {"champs": []})
     return identifiant
 
 
@@ -118,6 +120,10 @@ def chemin_icp(profil: str) -> Path:
 
 def chemin_brief(profil: str) -> Path:
     return PROFILS_DIR / profil / "email_brief.yaml"
+
+
+def chemin_champs(profil: str) -> Path:
+    return PROFILS_DIR / profil / "champs.yaml"
 
 
 def load_icp(profil: str) -> dict:
@@ -130,6 +136,53 @@ def load_brief(profil: str) -> dict:
     init_profils()
     with open(chemin_brief(profil), encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def load_champs(profil: str) -> list[dict]:
+    """Champs personnalisés définis pour ce profil : [{nom, libelle}, ...].
+    'nom' est l'identifiant technique (clé JSON), 'libelle' ce qui s'affiche
+    dans l'interface. Fichier créé vide au besoin (profils migrés avant
+    l'existence de cette fonctionnalité n'en ont pas encore)."""
+    chemin = chemin_champs(profil)
+    if not chemin.exists():
+        _ecrire_yaml(chemin, {"champs": []})
+    with open(chemin, encoding="utf-8") as f:
+        contenu = yaml.safe_load(f) or {}
+    return contenu.get("champs", [])
+
+
+def save_champs(profil: str, champs: list[dict]) -> None:
+    _ecrire_yaml(chemin_champs(profil), {"champs": champs})
+
+
+def _identifiant_sur(texte: str) -> str:
+    """Transforme un libellé libre en identifiant technique sûr : translittère
+    les accents d'abord (sinon 'estimé' -> 'estim_' -> 'estim', perdant sa
+    dernière lettre au strip), puis ne garde que [a-z0-9_]."""
+    sans_accents = unicodedata.normalize("NFKD", texte).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9_]", "_", sans_accents.strip().lower().replace(" ", "_")).strip("_")
+
+
+def ajouter_champ(profil: str, nom: str, libelle: str) -> None:
+    """Ajoute une variable personnalisée. 'nom' est normalisé en identifiant
+    technique sûr (utilisé comme clé JSON et comme name= de formulaire)."""
+    identifiant = _identifiant_sur(nom)
+    if not identifiant:
+        raise ValueError("Nom de champ invalide.")
+    champs = load_champs(profil)
+    if any(c["nom"] == identifiant for c in champs):
+        raise ValueError(f"Le champ '{identifiant}' existe déjà.")
+    champs.append({"nom": identifiant, "libelle": libelle.strip() or identifiant})
+    save_champs(profil, champs)
+
+
+def supprimer_champ(profil: str, nom: str) -> None:
+    """Retire la DÉFINITION du champ — les valeurs déjà enregistrées sur les
+    prospects existants restent en base (orphelines, invisibles) plutôt que
+    d'aller les effacer une par une ; recréer un champ du même nom les
+    ferait réapparaître, mais ce n'est pas la garantie recherchée ici."""
+    champs = [c for c in load_champs(profil) if c["nom"] != nom]
+    save_champs(profil, champs)
 
 
 def save_icp(profil: str, icp: dict) -> None:

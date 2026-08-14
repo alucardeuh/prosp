@@ -11,13 +11,47 @@
     </div>
 </div>
 
+<div class="carte">
+    <h2>Champs personnalisés (profil actif)</h2>
+    <p class="aide">
+        Ajoute ou retire des variables propres à ce profil, en plus des champs
+        de base (prénom, nom, poste, entreprise, secteur, taille, LinkedIn,
+        email, notes). Elles apparaissent ensuite dans le formulaire manuel
+        ci-dessous, sont reconnues automatiquement dans un import CSV si le
+        nom de colonne correspond, et sont éditables sur la fiche de chaque
+        prospect.
+    </p>
+    {% if champs_perso %}
+    <div class="liste-champs-perso">
+        {% for c in champs_perso %}
+        <div class="champ-perso-ligne">
+            <span>{{ c.libelle }} <span class="mono aide">({{ c.nom }})</span></span>
+            <form method="post" action="/ajouter/champs/supprimer" style="display:inline">
+                <input type="hidden" name="nom" value="{{ c.nom }}">
+                <button type="submit" class="danger" onclick="return confirm('Retirer ce champ ? Les valeurs déjà enregistrées resteront en base mais ne s\'afficheront plus.')">Retirer</button>
+            </form>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p class="aide">Aucun champ personnalisé pour ce profil pour l'instant.</p>
+    {% endif %}
+    <form method="post" action="/ajouter/champs" style="margin-top:14px">
+        <div class="rangee-boutons">
+            <input type="text" name="libelle" placeholder="Nom du champ, ex : Budget estimé" required style="flex:1">
+            <button type="submit" class="primaire">Ajouter le champ</button>
+        </div>
+    </form>
+</div>
+
 <div class="grille-2">
     <div class="carte">
         <h2>Import en masse (CSV)</h2>
         <p class="aide">
             Colonnes reconnues : <span class="mono">prenom, nom, poste, entreprise, secteur,
-            taille_entreprise, linkedin_url, email, notes</span>. Les colonnes
-            manquantes sont ignorées, les doublons (même LinkedIn) rejetés proprement.
+            taille_entreprise, linkedin_url, email, notes</span>{% if champs_perso %}, plus tes champs
+            personnalisés (colonne nommée exactement <span class="mono">{{ champs_perso[0].nom }}</span>{% if champs_perso|length > 1 %}, etc.{% endif %}){% endif %}.
+            Les colonnes manquantes sont ignorées, les doublons (même LinkedIn) rejetés proprement.
         </p>
         <form method="post" action="/ajouter/csv" enctype="multipart/form-data" style="margin-top:12px">
             <label for="fichier">Fichier CSV</label>
@@ -40,6 +74,9 @@
                 <div><label for="taille">Taille</label><input type="text" id="taille" name="taille" placeholder="ex : 50-200"></div>
                 <div><label for="email">Email</label><input type="email" id="email" name="email"></div>
                 <div><label for="linkedin">LinkedIn</label><input type="text" id="linkedin" name="linkedin"></div>
+                {% for c in champs_perso %}
+                <div><label for="champ_{{ c.nom }}">{{ c.libelle }}</label><input type="text" id="champ_{{ c.nom }}" name="champ_{{ c.nom }}"></div>
+                {% endfor %}
             </div>
             <label for="notes">Notes</label>
             <textarea id="notes" name="notes" rows="2"></textarea>

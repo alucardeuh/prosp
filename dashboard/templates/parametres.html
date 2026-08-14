@@ -4,7 +4,86 @@
 <div class="entete-page">
     <div>
         <h1>Paramètres</h1>
-        <div class="sous-titre">Tout ce qui pilote la qualification, la rédaction et les limites d'envoi — par profil.</div>
+        <div class="sous-titre">Tout ce qui pilote la qualification, la rédaction, les limites d'envoi et les connexions externes.</div>
+    </div>
+</div>
+
+<div class="carte">
+    <h2>Connexions</h2>
+    <p class="aide">Relie tes comptes une fois ici — les agents s'en servent ensuite automatiquement, sans rien toucher ailleurs.</p>
+    <div class="grille-2" style="margin-top:14px">
+
+        <div class="carte-connexion">
+            <div class="entete-connexion">
+                <h3>Gmail</h3>
+                <span class="pastille pastille-{{ 'ok' if statut_gmail.etat == 'connecte' else ('attente' if statut_gmail.etat == 'pret' else 'off') }}">{{ statut_gmail.libelle }}</span>
+            </div>
+
+            {% if statut_gmail.etat == 'sans_identifiants' %}
+            <p class="aide">
+                1. Crée un projet sur <a href="https://console.cloud.google.com" target="_blank" rel="noopener">console.cloud.google.com</a>,
+                active l'API Gmail, configure l'écran de consentement (externe, toi comme testeur),
+                puis crée un identifiant OAuth de type « Application de bureau ».<br>
+                2. Télécharge le fichier JSON et dépose-le ici :
+            </p>
+            <form method="post" action="/parametres/gmail/identifiants" enctype="multipart/form-data" style="margin-top:10px">
+                <input type="file" name="fichier" accept=".json" required>
+                <div class="rangee-boutons" style="margin-top:10px">
+                    <button type="submit" class="primaire">Enregistrer les identifiants</button>
+                </div>
+            </form>
+            {% else %}
+            <p class="aide">
+                {% if statut_gmail.etat == 'pret' %}
+                Identifiants enregistrés. Clique pour autoriser l'accès — un onglet
+                Google va s'ouvrir.
+                {% else %}
+                Lecture et envoi opérationnels. Reconnecte pour changer de compte.
+                {% endif %}
+            </p>
+            <div class="rangee-boutons" style="margin-top:10px">
+                <form method="post" action="/parametres/tester-gmail" style="display:inline">
+                    <button type="submit" class="primaire">{{ 'Connecter Gmail' if statut_gmail.etat == 'pret' else 'Tester la connexion' }}</button>
+                </form>
+                {% if statut_gmail.etat == 'connecte' %}
+                <form method="post" action="/parametres/gmail/deconnecter" style="display:inline">
+                    <button type="submit" class="danger" onclick="return confirm('Déconnecter Gmail ?')">Déconnecter</button>
+                </form>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="carte-connexion">
+            <div class="entete-connexion">
+                <h3>HubSpot</h3>
+                <span class="pastille pastille-{{ 'ok' if statut_hubspot.etat == 'token_enregistre' else 'off' }}">{{ statut_hubspot.libelle }}</span>
+            </div>
+            <p class="aide">
+                Connexion par token d'App privée — le chemin le plus simple pour relier
+                ton propre compte, sans procédure OAuth lourde. Dans HubSpot :
+                Réglages → Intégrations → Applications privées → Créer une application,
+                coche le scope <span class="mono">crm.objects.contacts.read</span>, copie le token généré.
+            </p>
+            <form method="post" action="/parametres/hubspot/token" style="margin-top:10px">
+                <input type="password" name="token" placeholder="{{ 'Token déjà enregistré — colle-en un nouveau pour le remplacer' if statut_hubspot.etat == 'token_enregistre' else 'pat-xx-xxxxxxxx-...' }}">
+                <div class="rangee-boutons" style="margin-top:10px">
+                    <button type="submit" class="primaire">Enregistrer le token</button>
+                </div>
+            </form>
+            {% if statut_hubspot.etat == 'token_enregistre' %}
+            <div class="rangee-boutons" style="margin-top:10px">
+                <form method="post" action="/parametres/hubspot/tester" style="display:inline">
+                    <button type="submit">Tester la connexion</button>
+                </form>
+                <button type="button" onclick="lancerJob('/api/jobs/importer-hubspot', {}, this)">Importer les contacts</button>
+                <form method="post" action="/parametres/hubspot/deconnecter" style="display:inline">
+                    <button type="submit" class="danger" onclick="return confirm('Retirer le token HubSpot ?')">Déconnecter</button>
+                </form>
+            </div>
+            {% endif %}
+        </div>
+
     </div>
 </div>
 
@@ -102,31 +181,27 @@
                 <label for="max_relances">Nombre max de relances par prospect</label>
                 <input type="number" id="max_relances" name="max_relances" min="0" max="5" value="{{ reglages.max_relances }}">
 
-                <label for="max_recherches_web">Recherches web par email initial</label>
-                <input type="number" id="max_recherches_web" name="max_recherches_web" min="0" max="5" value="{{ reglages.max_recherches_web }}">
+                <label for="max_recherches_web">Recherches web par email initial (niveau par défaut)</label>
+                <select id="max_recherches_web" name="max_recherches_web">
+                    {% for nom, valeur in niveaux_recherche.items() %}
+                    <option value="{{ nom }}" {% if reglages.max_recherches_web == nom %}selected{% endif %}>
+                        {{ nom | capitalize }} ({{ valeur }} recherche{{ 's' if valeur != 1 else '' }})
+                    </option>
+                    {% endfor %}
+                </select>
                 <p class="aide">
                     Combien d'actualités Claude peut chercher sur l'entreprise avant de
-                    rédiger un premier email (jamais pour les relances). <strong>0 = désactivé</strong> —
+                    rédiger un premier email (jamais pour les relances). <strong>Désactivé</strong> —
                     l'email s'appuie alors uniquement sur le profil du prospect. C'est le
                     principal poste de coût du projet : chaque recherche facture $10/1000
-                    en plus des tokens du contenu rapporté. Baisse ce chiffre si tu veux
-                    réduire la note, monte-le si tu préfères des emails plus personnalisés.
+                    en plus des tokens du contenu rapporté. Ce niveau ne sert que de valeur
+                    par défaut — tu peux le changer pour un lot d'envoi précis directement
+                    depuis la page <a href="/envoi">Envoi</a>.
                 </p>
 
                 <div class="rangee-boutons" style="margin-top:16px">
                     <button type="submit" class="primaire">Enregistrer les réglages</button>
                 </div>
-            </form>
-        </div>
-
-        <div class="carte">
-            <h2>Connexion Gmail</h2>
-            <p class="aide">
-                Vérifie que la lecture/envoi fonctionne. Au tout premier
-                lancement, un onglet s'ouvre pour l'autorisation Google.
-            </p>
-            <form method="post" action="/parametres/tester-gmail" style="margin-top:12px">
-                <button type="submit">Tester la connexion Gmail</button>
             </form>
         </div>
     </div>

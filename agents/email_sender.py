@@ -30,6 +30,7 @@ load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 import profils  # noqa: E402
+from agents import qualification  # noqa: E402 - réutilise _usage_de, pas de duplication
 from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
 
@@ -49,9 +50,33 @@ def _outil_recherche_web(max_uses: int) -> dict:
     }
 
 
-def _max_recherches_web() -> int:
+# Niveaux nommés pour le choix du nombre de recherches web — utilisés à la
+# fois comme valeur par défaut (Paramètres) et comme choix ponctuel par lot
+# d'envoi (page /envoi, remplace la valeur par défaut pour CE lot précis).
+# Nommés plutôt qu'un simple chiffre : plus clair à choisir au moment de
+# lancer un envoi que de se souvenir de ce que "3" veut dire.
+NIVEAUX_RECHERCHE = {
+    "desactive": 0,
+    "simple": 1,
+    "normal": 3,
+    "approfondi": 5,
+}
+
+
+def _max_recherches_web(niveau: str | int | None = None) -> int:
+    """Résout un niveau de recherche vers un nombre de recherches. Un entier
+    est utilisé tel quel (compat CLI/anciens appels). Un nom (simple/normal/
+    approfondi/desactive) est traduit. None retombe sur le réglage par défaut
+    du profil (Paramètres)."""
+    if niveau is None:
+        try:
+            return max(0, int(db.get_reglage("max_recherches_web") or 3))
+        except (TypeError, ValueError):
+            return 3
+    if isinstance(niveau, str):
+        return NIVEAUX_RECHERCHE.get(niveau, 3)
     try:
-        return max(0, int(db.get_reglage("max_recherches_web") or 3))
+        return max(0, int(niveau))
     except (TypeError, ValueError):
         return 3
 
@@ -113,7 +138,8 @@ même email (pas d'humour au milieu d'un email factuel, pas de familiarité
 soudaine après un paragraphe formel)."""
 
 
-def build_prompt(prospect: dict, icp: dict, brief: dict, avec_recherche: bool = True) -> str:
+def build_prompt(prospect: dict, icp: dict, brief: dict, avec_recherche: bool = True,
+                 contexte_batch: str = "") -> str:
     produit = icp.get("produit", {})
 
     if avec_recherche:
@@ -136,6 +162,15 @@ Paramètres) : base-toi uniquement sur le profil du prospect ci-dessous,
 sans jamais inventer une actualité que tu n'as pas vérifiée. Appelle
 l'outil `rediger_email` avec ton résultat final. Ne réponds jamais en
 texte libre à la fin."""
+
+    bloc_contexte = ""
+    if contexte_batch and contexte_batch.strip():
+        bloc_contexte = f"""
+
+# Contexte donné pour ce lot d'envoi précis (par la personne qui a lancé
+cette génération — à prendre en compte en priorité, ça décrit l'angle ou
+la raison de cette campagne précise)
+{contexte_batch.strip()}"""
 
     return f"""Tu es un agent qui rédige des emails de prospection B2B
 personnalisés.
@@ -162,6 +197,7 @@ Secteur : {prospect.get('secteur', '')}
 Taille d'entreprise : {prospect.get('taille_entreprise', '')}
 Notes : {prospect.get('notes', '')}
 Raison de qualification (pourquoi ce prospect a été retenu) : {prospect.get('raison_qualification', '')}
+{bloc_contexte}
 
 # Obligatoire à la fin de l'email
 {brief.get('signature', '')}
@@ -173,8 +209,17 @@ n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
 sinon sur un détail réel de son profil ci-dessus."""
 
 
-def build_prompt_relance(prospect: dict, icp: dict, brief: dict, premier_email: str) -> str:
+def build_prompt_relance(prospect: dict, icp: dict, brief: dict, premier_email: str,
+                         contexte_batch: str = "") -> str:
     produit = icp.get("produit", {})
+    bloc_contexte = ""
+    if contexte_batch and contexte_batch.strip():
+        bloc_contexte = f"""
+
+# Contexte donné pour ce lot de relances précis (par la personne qui a
+lancé cette génération — à prendre en compte en priorité)
+{contexte_batch.strip()}"""
+
     return f"""Tu es un agent qui rédige des emails de RELANCE de
 prospection B2B. Le prospect a déjà reçu un premier email resté sans
 réponse — tu rédiges le suivi.
@@ -207,13 +252,14 @@ Relances déjà envoyées : {prospect.get('nb_relances', 0)}
 
 # Premier email envoyé (pour référence, ne pas le répéter)
 {premier_email or '(contenu du premier email non disponible — reste générique sur la référence au message précédent)'}
+{bloc_contexte}
 
 # Obligatoire à la fin de l'email
 {brief.get('signature', '')}
 {brief.get('mention_obligatoire', '')}"""
 
 
-def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> dict:
+def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> tuple[dict, dict]:
     if client is None:
         import anthropic
 
@@ -229,53 +275,69 @@ def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> dic
         tools=tools,
         messages=[{"role": "user", "content": prompt}],
     )
+    usage = qualification._usage_de(response)
     for block in response.content:
         if block.type == "tool_use" and block.name == "rediger_email":
-            return block.input
+            return block.input, usage
     raise RuntimeError(
         "L'API n'a pas appelé rediger_email (elle a peut-être répondu en texte "
         "libre au lieu de finaliser l'email)."
     )
 
 
-def redact_email(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
-    """Rédige l'email initial. Fait de 0 à N recherches web selon le réglage
-    'max_recherches_web' (Paramètres, 0 = désactivé) — jamais codé en dur.
-    Retourne {objet, corps}."""
-    max_recherches = _max_recherches_web()
-    prompt = build_prompt(prospect, icp, brief, avec_recherche=max_recherches > 0)
+def redact_email(prospect: dict, icp: dict, brief: dict, client=None,
+                 niveau_recherche: str | int | None = None, contexte_batch: str = "") -> tuple[dict, dict]:
+    """Rédige l'email initial. Fait de 0 à N recherches web selon
+    niveau_recherche (simple/normal/approfondi/desactive, ou un entier, ou
+    None pour le réglage par défaut du profil dans Paramètres). contexte_batch
+    est un texte libre propre à CE lot d'envoi, jamais persisté ailleurs que
+    dans le prompt de cette génération précise. Retourne ({objet, corps}, usage)."""
+    max_recherches = _max_recherches_web(niveau_recherche)
+    prompt = build_prompt(prospect, icp, brief, avec_recherche=max_recherches > 0,
+                          contexte_batch=contexte_batch)
     return _appeler_redaction(prompt, client, max_recherches=max_recherches)
 
 
-def redact_relance(prospect: dict, icp: dict, brief: dict, client=None) -> dict:
+def redact_relance(prospect: dict, icp: dict, brief: dict, client=None,
+                   contexte_batch: str = "") -> tuple[dict, dict]:
     """Rédige un email de relance court, basé sur le premier email envoyé.
     Pas de recherche web : la relance s'appuie sur le fil existant."""
     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
     premier_email = derniere["contenu"] if derniere else ""
     return _appeler_redaction(
-        build_prompt_relance(prospect, icp, brief, premier_email), client, max_recherches=0
+        build_prompt_relance(prospect, icp, brief, premier_email, contexte_batch=contexte_batch),
+        client, max_recherches=0,
     )
 
 
-def _fake_redaction(prospect: dict, relance: bool = False) -> dict:
+def _fake_redaction(prospect: dict, relance: bool = False) -> tuple[dict, dict]:
     prefixe = "Relance simulée" if relance else "Objet simulé"
     return {
         "objet": f"[DRY-RUN] {prefixe} pour {prospect.get('prenom', '')}",
         "corps": "[DRY-RUN] Corps d'email simulé, aucun appel API réel n'a été fait.",
-    }
+    }, {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
 
 
 def generer_brouillon(prospect: dict, icp: dict, brief: dict,
-                      type_: str = "initial", dry_run: bool = False, client=None) -> dict:
-    """Génère un brouillon (initial ou relance) et le PERSISTE en base.
-    Brique utilisée par le CLI et par les jobs du dashboard."""
+                      type_: str = "initial", dry_run: bool = False, client=None,
+                      niveau_recherche: str | int | None = None, contexte_batch: str = "") -> dict:
+    """Génère un brouillon (initial ou relance) et le PERSISTE en base, avec
+    le coût réel (tokens + recherches) de cette génération précise — cumulé
+    si le brouillon est régénéré plusieurs fois avant l'envoi.
+    niveau_recherche et contexte_batch ne s'appliquent qu'aux emails initiaux
+    (une relance ne fait jamais de recherche, et le contexte de batch reste
+    pertinent pour elle aussi si fourni). Brique utilisée par le CLI et par
+    les jobs du dashboard."""
     if dry_run:
-        redaction = _fake_redaction(prospect, relance=(type_ == "relance"))
+        redaction, usage = _fake_redaction(prospect, relance=(type_ == "relance"))
     elif type_ == "relance":
-        redaction = redact_relance(prospect, icp, brief, client)
+        redaction, usage = redact_relance(prospect, icp, brief, client, contexte_batch=contexte_batch)
     else:
-        redaction = redact_email(prospect, icp, brief, client)
-    db.set_brouillon(prospect["id"], redaction["objet"], redaction["corps"], type_=type_)
+        redaction, usage = redact_email(prospect, icp, brief, client,
+                                        niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
+    db.set_brouillon(prospect["id"], redaction["objet"], redaction["corps"], type_=type_,
+                     tokens_entree=usage["tokens_entree"], tokens_sortie=usage["tokens_sortie"],
+                     recherches_web=usage["recherches_web"])
     return redaction
 
 
@@ -334,11 +396,17 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
     contenu_historique = f"Objet: {brouillon['objet']}\n\n{brouillon['corps']}"
     if brouillon["type"] == "relance":
         db.add_interaction(prospect_id, "relance_envoyee", contenu_historique,
-                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id)
+                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id,
+                          tokens_entree=brouillon.get("tokens_entree", 0),
+                          tokens_sortie=brouillon.get("tokens_sortie", 0),
+                          recherches_web=brouillon.get("recherches_web", 0))
         db.incrementer_relances(prospect_id)
     else:
         db.add_interaction(prospect_id, "email_envoye", contenu_historique,
-                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id)
+                          gmail_thread_id=nouveau_thread_id, rfc_message_id=nouveau_rfc_id,
+                          tokens_entree=brouillon.get("tokens_entree", 0),
+                          tokens_sortie=brouillon.get("tokens_sortie", 0),
+                          recherches_web=brouillon.get("recherches_web", 0))
         db.update_statut(prospect_id, "contacte")
     db.delete_brouillon(prospect_id)
     return brouillon

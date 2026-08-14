@@ -56,12 +56,22 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 conn.execute("ALTER TABLE prospects ADD COLUMN profil TEXT NOT NULL DEFAULT 'sammpo'")
             if "nb_relances" not in colonnes:
                 conn.execute("ALTER TABLE prospects ADD COLUMN nb_relances INTEGER NOT NULL DEFAULT 0")
+            if "champs_perso" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN champs_perso TEXT NOT NULL DEFAULT '{}'")
         if "interactions" in tables:
             cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
             if "gmail_thread_id" not in cols_int:
                 conn.execute("ALTER TABLE interactions ADD COLUMN gmail_thread_id TEXT")
             if "rfc_message_id" not in cols_int:
                 conn.execute("ALTER TABLE interactions ADD COLUMN rfc_message_id TEXT")
+            for col in ("tokens_entree", "tokens_sortie", "recherches_web"):
+                if col not in cols_int:
+                    conn.execute(f"ALTER TABLE interactions ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+        if "brouillons" in tables:
+            cols_br = {row[1] for row in conn.execute("PRAGMA table_info(brouillons)").fetchall()}
+            for col in ("tokens_entree", "tokens_sortie", "recherches_web"):
+                if col not in cols_br:
+                    conn.execute(f"ALTER TABLE brouillons ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
         conn.executescript(SCHEMA_PATH.read_text())
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
@@ -114,13 +124,17 @@ TRIS_AUTORISES = {
 }
 
 
-def add_prospect(data: dict, db_path: Path = DB_PATH) -> int:
-    """Insère un prospect. Retourne l'id inséré. Si aucun profil n'est
-    précisé (scripts CLI, import direct), rattache au profil actif plutôt
-    qu'au défaut du schéma — pour que tout reste cohérent avec l'interface."""
+def add_prospect(data: dict, champs_perso: dict | None = None, db_path: Path = DB_PATH) -> int:
+    """Insère un prospect. champs_perso est un dict de valeurs pour les
+    variables personnalisées définies dans config/profils/<profil>/champs.yaml
+    (voir profils.py) — stocké en JSON, indépendant des colonnes fixes.
+    Si aucun profil n'est précisé (scripts CLI, import direct), rattache au
+    profil actif plutôt qu'au défaut du schéma — pour que tout reste
+    cohérent avec l'interface."""
     data = {k: v for k, v in data.items() if k in CHAMPS_PROSPECT}
     if not data.get("profil"):
         data["profil"] = profil_actif(db_path)
+    data["champs_perso"] = json.dumps(champs_perso or {}, ensure_ascii=False)
     colonnes = ", ".join(data.keys())
     placeholders = ", ".join("?" for _ in data)
     with get_connection(db_path) as conn:
@@ -129,6 +143,19 @@ def add_prospect(data: dict, db_path: Path = DB_PATH) -> int:
             list(data.values()),
         )
         return cur.lastrowid
+
+
+def update_champs_perso(prospect_id: int, valeurs: dict, db_path: Path = DB_PATH) -> None:
+    """Fusionne (ne remplace pas) les valeurs de champs personnalisés d'un
+    prospect — modifier un seul champ ne doit jamais effacer les autres."""
+    with get_connection(db_path) as conn:
+        row = conn.execute("SELECT champs_perso FROM prospects WHERE id = ?", (prospect_id,)).fetchone()
+        actuel = json.loads(row["champs_perso"]) if row and row["champs_perso"] else {}
+        actuel.update(valeurs)
+        conn.execute(
+            "UPDATE prospects SET champs_perso = ?, date_derniere_action = CURRENT_TIMESTAMP WHERE id = ?",
+            (json.dumps(actuel, ensure_ascii=False), prospect_id),
+        )
 
 
 def get_prospect(prospect_id: int, db_path: Path = DB_PATH) -> dict | None:
@@ -153,6 +180,27 @@ def update_prospect(prospect_id: int, data: dict, db_path: Path = DB_PATH) -> No
 def delete_prospect(prospect_id: int, db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute("DELETE FROM prospects WHERE id = ?", (prospect_id,))
+
+
+def list_prospects_pour_selection(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+    """Tous les prospects du profil, désinscrits exclus (jamais sélectionnables
+    pour un envoi, quoi qu'il arrive), avec leur nombre d'envois déjà réalisés
+    (email_envoye + relance_envoyee confondus) — sert à la table de sélection
+    sur mesure de /envoi, indépendamment du statut de qualification."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """SELECT p.*, COALESCE(e.nb_envois, 0) AS nb_envois
+               FROM prospects p
+               LEFT JOIN (
+                   SELECT prospect_id, COUNT(*) AS nb_envois FROM interactions
+                   WHERE type IN ('email_envoye', 'relance_envoyee')
+                   GROUP BY prospect_id
+               ) e ON e.prospect_id = p.id
+               WHERE p.profil = ? AND p.statut != 'desinscrit'
+               ORDER BY p.date_creation DESC""",
+            (profil,),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def list_prospects(
@@ -219,6 +267,8 @@ def update_qualification(
     raison: str,
     signaux_positifs: list[str],
     signaux_negatifs: list[str],
+    tokens_entree: int = 0,
+    tokens_sortie: int = 0,
     db_path: Path = DB_PATH,
 ) -> None:
     nouveau_statut = "qualifie" if qualifie else "disqualifie"
@@ -239,8 +289,9 @@ def update_qualification(
             ),
         )
         conn.execute(
-            "INSERT INTO interactions (prospect_id, type, contenu) VALUES (?, 'qualification', ?)",
-            (prospect_id, raison),
+            "INSERT INTO interactions (prospect_id, type, contenu, tokens_entree, tokens_sortie) "
+            "VALUES (?, 'qualification', ?, ?, ?)",
+            (prospect_id, raison, tokens_entree, tokens_sortie),
         )
 
 
@@ -264,12 +315,14 @@ def incrementer_relances(prospect_id: int, db_path: Path = DB_PATH) -> None:
 
 def add_interaction(prospect_id: int, type_: str, contenu: str,
                     gmail_thread_id: str | None = None, rfc_message_id: str | None = None,
+                    tokens_entree: int = 0, tokens_sortie: int = 0, recherches_web: int = 0,
                     db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute(
-            "INSERT INTO interactions (prospect_id, type, contenu, gmail_thread_id, rfc_message_id) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (prospect_id, type_, contenu, gmail_thread_id, rfc_message_id),
+            "INSERT INTO interactions (prospect_id, type, contenu, gmail_thread_id, rfc_message_id, "
+            "tokens_entree, tokens_sortie, recherches_web) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (prospect_id, type_, contenu, gmail_thread_id, rfc_message_id,
+             tokens_entree, tokens_sortie, recherches_web),
         )
 
 
@@ -336,13 +389,22 @@ def marquer_email_traite(message_id: str, prospect_id: int | None, db_path: Path
 # ---------------------------------------------------------------- brouillons
 
 def set_brouillon(prospect_id: int, objet: str, corps: str, type_: str = "initial",
+                  tokens_entree: int = 0, tokens_sortie: int = 0, recherches_web: int = 0,
                   db_path: Path = DB_PATH) -> None:
+    """Crée ou remplace le brouillon d'un prospect. Le TEXTE est remplacé
+    (une régénération écrase l'ancien objet/corps), mais les TOKENS
+    s'accumulent : régénérer 3 fois avant d'envoyer doit refléter le coût
+    réel des 3 tentatives, pas seulement de la dernière."""
     with get_connection(db_path) as conn:
         conn.execute(
-            "INSERT INTO brouillons (prospect_id, objet, corps, type) VALUES (?, ?, ?, ?) "
+            "INSERT INTO brouillons (prospect_id, objet, corps, type, tokens_entree, tokens_sortie, recherches_web) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(prospect_id) DO UPDATE SET objet = excluded.objet, "
-            "corps = excluded.corps, type = excluded.type, date_generation = CURRENT_TIMESTAMP",
-            (prospect_id, objet, corps, type_),
+            "corps = excluded.corps, type = excluded.type, date_generation = CURRENT_TIMESTAMP, "
+            "tokens_entree = brouillons.tokens_entree + excluded.tokens_entree, "
+            "tokens_sortie = brouillons.tokens_sortie + excluded.tokens_sortie, "
+            "recherches_web = brouillons.recherches_web + excluded.recherches_web",
+            (prospect_id, objet, corps, type_, tokens_entree, tokens_sortie, recherches_web),
         )
 
 
@@ -437,6 +499,52 @@ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
         "rdv": counts.get("rdv", 0),
         "desinscrits": counts.get("desinscrit", 0),
     }
+
+
+def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
+    """Tokens et recherches web consommés par le profil, tous prospects
+    confondus, avec le détail par type d'interaction (qualification,
+    email_envoye, relance_envoyee, email_recu) — pour la page Stats."""
+    with get_connection(db_path) as conn:
+        total = conn.execute(
+            """SELECT COALESCE(SUM(i.tokens_entree), 0) AS tokens_entree,
+                      COALESCE(SUM(i.tokens_sortie), 0) AS tokens_sortie,
+                      COALESCE(SUM(i.recherches_web), 0) AS recherches_web
+               FROM interactions i JOIN prospects p ON p.id = i.prospect_id
+               WHERE p.profil = ?""",
+            (profil,),
+        ).fetchone()
+        par_type = conn.execute(
+            """SELECT i.type,
+                      SUM(i.tokens_entree) AS tokens_entree,
+                      SUM(i.tokens_sortie) AS tokens_sortie,
+                      SUM(i.recherches_web) AS recherches_web
+               FROM interactions i JOIN prospects p ON p.id = i.prospect_id
+               WHERE p.profil = ? AND (i.tokens_entree > 0 OR i.tokens_sortie > 0)
+               GROUP BY i.type""",
+            (profil,),
+        ).fetchall()
+        return {
+            "tokens_entree": total["tokens_entree"],
+            "tokens_sortie": total["tokens_sortie"],
+            "recherches_web": total["recherches_web"],
+            "cout_recherches_usd": round(total["recherches_web"] * 10 / 1000, 3),
+            "par_type": {r["type"]: dict(r) for r in par_type},
+        }
+
+
+def prospect_existe_par_champ_perso(cle: str, valeur: str, profil: str, db_path: Path = DB_PATH) -> bool:
+    """Vérifie si un prospect du profil a déjà cette valeur pour ce champ
+    personnalisé — sert à éviter les doublons à l'import HubSpot, qui n'a
+    pas toujours d'URL LinkedIn (donc pas de contrainte UNIQUE native
+    comme pour l'import CSV)."""
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM prospects WHERE profil = ? "
+            "AND json_extract(champs_perso, '$.' || ?) = ? LIMIT 1",
+            (profil, cle, valeur),
+        ).fetchone()
+        return row is not None
 
 
 def set_getsales_lead_uuid(prospect_id: int, lead_uuid: str, db_path: Path = DB_PATH) -> None:

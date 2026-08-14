@@ -158,6 +158,74 @@ function majQuota(restant) {
   });
 }
 
+// ---------------------------------------------------------------- réglages de génération (page /envoi)
+// Lus une seule fois au moment de lancer une génération — jamais mémorisés,
+// propres au lot en cours (contexte texte libre + niveau de recherche).
+
+function lireReglagesGeneration() {
+  const champContexte = document.getElementById("contexte-batch");
+  const champNiveau = document.getElementById("niveau-recherche");
+  return {
+    contexte_batch: champContexte ? champContexte.value : "",
+    niveau_recherche: champNiveau ? champNiveau.value : undefined,
+  };
+}
+
+async function lancerGenerationAuto(type, bouton) {
+  const corps = Object.assign({ type: type }, lireReglagesGeneration());
+  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
+}
+
+async function regenererUn(prospectId, type, bouton) {
+  const corps = Object.assign({ type: type }, lireReglagesGeneration());
+  await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton);
+}
+
+// ---------------------------------------------------------------- sélection sur mesure (page /envoi)
+
+function toutCocher(caseATout) {
+  document.querySelectorAll("#table-selection .case-selection").forEach((c) => {
+    if (c.closest("tr").style.display !== "none") c.checked = caseATout.checked;
+  });
+  majCompteurSelection();
+}
+
+function majCompteurSelection() {
+  const cochees = document.querySelectorAll("#table-selection .case-selection:checked").length;
+  document.getElementById("compteur-selection").textContent = cochees;
+  document.getElementById("bouton-generer-selection").disabled = cochees === 0;
+}
+
+function filtrerSelection() {
+  const poste = document.getElementById("filtre-poste").value.trim().toLowerCase();
+  const statut = document.getElementById("filtre-statut").value;
+  const envois = document.getElementById("filtre-envois").value;
+  document.querySelectorAll("#table-selection tbody tr").forEach((tr) => {
+    let ok = !poste || tr.dataset.poste.includes(poste);
+    if (ok && statut) ok = tr.dataset.statut === statut;
+    if (ok && envois !== "") ok = parseInt(tr.dataset.envois, 10) >= parseInt(envois, 10);
+    tr.style.display = ok ? "" : "none";
+    if (!ok) tr.querySelector(".case-selection").checked = false;
+  });
+  document.getElementById("tout-cocher").checked = false;
+  majCompteurSelection();
+}
+
+async function genererSelection(type, bouton) {
+  const ids = Array.from(document.querySelectorAll("#table-selection .case-selection:checked"))
+    .map((c) => parseInt(c.value, 10));
+  if (!ids.length) return;
+  const corps = Object.assign({ type: type, ids: ids }, lireReglagesGeneration());
+  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
+}
+
+document.addEventListener("click", (e) => {
+  const ligne = e.target.closest("#table-selection tbody tr");
+  if (!ligne || e.target.matches("input, a")) return;
+  const case_ = ligne.querySelector(".case-selection");
+  if (case_) { case_.checked = !case_.checked; majCompteurSelection(); }
+});
+
 // ---------------------------------------------------------------- prospects
 
 async function changerStatut(prospectId, select) {

@@ -32,6 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+from agents import qualification  # noqa: E402 - réutilise _usage_de, pas de duplication
 from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
 
@@ -100,7 +101,7 @@ TOUJOURS en 'desinscription', même si le reste du message est ambigu :
 mieux vaut arrêter de contacter quelqu'un par excès de prudence que l'inverse."""
 
 
-def classify_email(prospect: dict, email: dict, client=None) -> dict:
+def classify_email(prospect: dict, email: dict, client=None) -> tuple[dict, dict]:
     if client is None:
         import anthropic
 
@@ -113,18 +114,19 @@ def classify_email(prospect: dict, email: dict, client=None) -> dict:
         tool_choice={"type": "tool", "name": "classifier_email"},
         messages=[{"role": "user", "content": build_prompt(prospect, email)}],
     )
+    usage = qualification._usage_de(response)
     for block in response.content:
         if block.type == "tool_use" and block.name == "classifier_email":
-            return block.input
+            return block.input, usage
     raise RuntimeError("L'API n'a pas retourné d'appel d'outil (réponse inattendue).")
 
 
-def _fake_classification() -> dict:
+def _fake_classification() -> tuple[dict, dict]:
     return {
         "categorie": "interesse",
         "raison": "[DRY-RUN] Réponse simulée, aucun appel API réel n'a été fait.",
         "action_recommandee": "[DRY-RUN] aucune action réelle recommandée.",
-    }
+    }, {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
 
 
 def _extraire_adresse(champ_de: str) -> str:
@@ -187,7 +189,7 @@ def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
 def traiter_email(prospect: dict, email: dict, dry_run: bool = False, client=None) -> dict:
     """Classe UN email et écrit le résultat en base. Brique utilisée par
     run() (CLI) et par le job du dashboard."""
-    resultat = _fake_classification() if dry_run else classify_email(prospect, email, client)
+    resultat, usage = _fake_classification() if dry_run else classify_email(prospect, email, client)
 
     nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
     if nouveau_statut:
@@ -196,6 +198,7 @@ def traiter_email(prospect: dict, email: dict, dry_run: bool = False, client=Non
     db.add_interaction(
         prospect["id"], "email_recu",
         f"[{resultat['categorie']}] {resultat['raison']} -> {resultat['action_recommandee']}",
+        tokens_entree=usage["tokens_entree"], tokens_sortie=usage["tokens_sortie"],
     )
     if not dry_run:
         db.marquer_email_traite(email["id"], prospect["id"])

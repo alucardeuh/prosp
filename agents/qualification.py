@@ -106,8 +106,23 @@ Sois honnête sur le score : un profil moyen doit avoir un score moyen, ne
 gonfle pas artificiellement les scores."""
 
 
-def qualify_prospect(prospect: dict, icp: dict, client=None) -> dict:
-    """Appelle Claude et retourne le dict structuré de qualification."""
+def _usage_de(response) -> dict:
+    """Extrait tokens_entree/tokens_sortie/recherches_web d'une réponse API,
+    quel que soit l'agent qui a fait l'appel — même format partout."""
+    usage = getattr(response, "usage", None)
+    if not usage:
+        return {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
+    server_tool_use = getattr(usage, "server_tool_use", None)
+    recherches = getattr(server_tool_use, "web_search_requests", 0) if server_tool_use else 0
+    return {
+        "tokens_entree": getattr(usage, "input_tokens", 0) or 0,
+        "tokens_sortie": getattr(usage, "output_tokens", 0) or 0,
+        "recherches_web": recherches or 0,
+    }
+
+
+def qualify_prospect(prospect: dict, icp: dict, client=None) -> tuple[dict, dict]:
+    """Appelle Claude et retourne (résultat structuré, usage tokens)."""
     if client is None:
         import anthropic
 
@@ -120,15 +135,16 @@ def qualify_prospect(prospect: dict, icp: dict, client=None) -> dict:
         tool_choice={"type": "tool", "name": "qualifier_prospect"},
         messages=[{"role": "user", "content": build_prompt(prospect, icp)}],
     )
+    usage = _usage_de(response)
 
     for block in response.content:
         if block.type == "tool_use" and block.name == "qualifier_prospect":
-            return block.input
+            return block.input, usage
 
     raise RuntimeError("L'API n'a pas retourné d'appel d'outil (réponse inattendue).")
 
 
-def _fake_qualification(prospect: dict, icp: dict) -> dict:
+def _fake_qualification(prospect: dict, icp: dict) -> tuple[dict, dict]:
     """Réponse simulée pour --dry-run : teste toute la chaîne sans clé API."""
     return {
         "qualifie": True,
@@ -136,7 +152,7 @@ def _fake_qualification(prospect: dict, icp: dict) -> dict:
         "raison": "[DRY-RUN] Réponse simulée, aucun appel API réel n'a été fait.",
         "signaux_positifs": ["exécution en mode test"],
         "signaux_negatifs": [],
-    }
+    }, {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
 
 
 def qualifier_un(prospect: dict, icp: dict, dry_run: bool = False, client=None) -> dict:
@@ -150,7 +166,7 @@ def qualifier_un(prospect: dict, icp: dict, dry_run: bool = False, client=None) 
     prospects au même score pourraient finir dans des statuts différents
     selon l'humeur du modèle, et changer le seuil dans Paramètres n'aurait
     aucun effet réel."""
-    resultat = _fake_qualification(prospect, icp) if dry_run else qualify_prospect(prospect, icp, client)
+    resultat, usage = _fake_qualification(prospect, icp) if dry_run else qualify_prospect(prospect, icp, client)
     try:
         seuil = int(icp.get("seuil_qualification", 60))
     except (TypeError, ValueError):
@@ -169,6 +185,8 @@ def qualifier_un(prospect: dict, icp: dict, dry_run: bool = False, client=None) 
         raison=resultat["raison"],
         signaux_positifs=resultat["signaux_positifs"],
         signaux_negatifs=resultat["signaux_negatifs"],
+        tokens_entree=usage["tokens_entree"],
+        tokens_sortie=usage["tokens_sortie"],
     )
     return resultat
 

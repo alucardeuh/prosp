@@ -30,7 +30,8 @@
     <div class="tete">
         <div class="qui">
             {{ p.prenom }} {{ p.nom }} <span class="etiquette-relance">relance {{ (p.nb_relances or 0) + 1 }}/{{ max_relances }}</span>
-            <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}</small>
+            <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}
+                {% if p.brouillon.tokens_entree %} · <span class="mono">{{ p.brouillon.tokens_entree + p.brouillon.tokens_sortie }} tokens</span>{% endif %}</small>
         </div>
         <a href="/prospect/{{ p.id }}">fiche</a>
     </div>
@@ -41,7 +42,7 @@
     <div class="pied">
         <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer la relance</button>
         <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
-        <button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'relance'}, this)">Regénérer</button>
+        <button onclick="regenererUn({{ p.id }}, 'relance', this)">Regénérer</button>
         <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
     </div>
 </div>
@@ -60,7 +61,7 @@
             <td>{{ p.entreprise or '—' }}</td>
             <td class="mono">{{ (p.date_dernier_envoi or '')[:10] }}</td>
             <td class="mono">{{ p.nb_relances or 0 }}/{{ max_relances }}</td>
-            <td><button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'relance'}, this)">Générer</button></td>
+            <td><button onclick="regenererUn({{ p.id }}, 'relance', this)">Générer</button></td>
         </tr>
         {% endfor %}
         </tbody>

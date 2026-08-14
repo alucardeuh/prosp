@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS prospects (
     -- et n'apparaît que quand ce profil est actif dans l'interface.
     profil              TEXT NOT NULL DEFAULT 'sammpo',
 
+    -- Champs personnalisés (définis par profil dans config/profils/<profil>/champs.yaml,
+    -- éditables depuis /ajouter) — stockés en JSON plutôt qu'en colonnes SQL
+    -- réelles pour ne jamais avoir à modifier le schéma quand tu ajoutes ou
+    -- retires une variable. {"nom_technique": "valeur", ...}
+    champs_perso        TEXT NOT NULL DEFAULT '{}',
+
     -- Relances : incrémenté à chaque relance envoyée, comparé au max configuré.
     nb_relances         INTEGER NOT NULL DEFAULT 0,
 
@@ -53,6 +59,13 @@ CREATE TABLE IF NOT EXISTS interactions (
     -- un email tout neuf dans la boîte du prospect.
     gmail_thread_id TEXT,
     rfc_message_id  TEXT,
+
+    -- Coût réel de l'appel API Claude qui a produit cette interaction
+    -- (qualification, email_envoye, relance_envoyee, email_recu). 0 pour
+    -- les interactions qui ne viennent pas d'un appel API (note, statut_manuel).
+    tokens_entree   INTEGER NOT NULL DEFAULT 0,
+    tokens_sortie   INTEGER NOT NULL DEFAULT 0,
+    recherches_web  INTEGER NOT NULL DEFAULT 0,
 
     date         TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -77,6 +90,15 @@ CREATE TABLE IF NOT EXISTS brouillons (
     corps           TEXT NOT NULL,
     type            TEXT NOT NULL DEFAULT 'initial'   -- initial | relance
                      CHECK (type IN ('initial', 'relance')),
+
+    -- Cumulés à travers les régénérations : si tu régénères 3 fois avant
+    -- d'envoyer, le coût réel inclut les 3 tentatives, pas juste la
+    -- dernière — ces totaux sont recopiés dans l'interaction finale au
+    -- moment de l'envoi (voir envoyer_brouillon).
+    tokens_entree   INTEGER NOT NULL DEFAULT 0,
+    tokens_sortie   INTEGER NOT NULL DEFAULT 0,
+    recherches_web  INTEGER NOT NULL DEFAULT 0,
+
     date_generation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

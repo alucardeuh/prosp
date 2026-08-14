@@ -5,13 +5,34 @@
     <div>
         <h1>Envoyer les premiers emails</h1>
         <div class="sous-titre">
-            Chaque email est rédigé par Claude pour ce prospect précis (recherche
-            d'actualité incluse). Tout est éditable, rien ne part sans ton clic.
+            Chaque email est rédigé par Claude pour ce prospect précis. Tout est
+            éditable, rien ne part sans ton clic.
             Quota restant aujourd'hui : <strong class="mono js-quota-restant">{{ quota_restant }}</strong>.
         </div>
     </div>
+</div>
+
+<div class="carte">
+    <h2>Réglages de cette génération</h2>
+    <p class="aide">S'applique au bouton automatique ci-dessous ET à la sélection sur mesure plus bas — propre à ce lot, rien n'est mémorisé.</p>
+    <div class="grille-fiche" style="margin-top:10px">
+        <div>
+            <label for="niveau-recherche">Niveau de recherche web</label>
+            <select id="niveau-recherche">
+                {% for nom in niveaux_recherche %}
+                <option value="{{ nom }}" {% if loop.index0 == 2 %}selected{% endif %}>{{ nom | capitalize }}</option>
+                {% endfor %}
+            </select>
+        </div>
+    </div>
+    <label for="contexte-batch" style="margin-top:12px">Contexte pour ce lot (facultatif)</label>
+    <textarea id="contexte-batch" rows="3" placeholder="Ex : recontacte les directeurs commerciaux du secteur assurance, une nouvelle réglementation impose X — mets en avant cet angle."></textarea>
+</div>
+
+<div class="entete-page">
+    <div></div>
     {% if sans_brouillon %}
-    <button class="primaire" onclick="lancerJob('/api/jobs/generer-brouillons', {type: 'initial'}, this)">
+    <button class="primaire" onclick="lancerGenerationAuto('initial', this)">
         Générer les {{ [sans_brouillon|length, quota_restant]|min }} brouillon(s)
     </button>
     {% endif %}
@@ -20,7 +41,7 @@
 {% if not avec_brouillon and not sans_brouillon %}
 <div class="vide">
     Aucun prospect qualifié avec email en attente d'envoi.<br>
-    <a href="/">Qualifie des prospects</a> d'abord, ou <a href="/ajouter">ajoutes-en</a>.
+    <a href="/">Qualifie des prospects</a> d'abord, ou compose une sélection sur mesure plus bas.
 </div>
 {% endif %}
 
@@ -30,7 +51,8 @@
         <div class="qui">
             {{ p.prenom }} {{ p.nom }}
             <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}
-                {% if p.score_qualification is not none %} · score {{ p.score_qualification }}{% endif %}</small>
+                {% if p.score_qualification is not none %} · score {{ p.score_qualification }}{% endif %}
+                {% if p.brouillon.tokens_entree %} · <span class="mono">{{ p.brouillon.tokens_entree + p.brouillon.tokens_sortie }} tokens{% if p.brouillon.recherches_web %}, {{ p.brouillon.recherches_web }} recherche(s){% endif %}</span>{% endif %}</small>
         </div>
         <a href="/prospect/{{ p.id }}">fiche</a>
     </div>
@@ -41,7 +63,7 @@
     <div class="pied">
         <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
         <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
-        <button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'initial'}, this)">Regénérer</button>
+        <button onclick="regenererUn({{ p.id }}, 'initial', this)">Regénérer</button>
         <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
     </div>
 </div>
@@ -60,7 +82,7 @@
             <td><a href="/prospect/{{ p.id }}">{{ p.prenom }} {{ p.nom }}</a></td>
             <td>{{ p.entreprise or '—' }}</td>
             <td class="mono">{{ p.score_qualification if p.score_qualification is not none else '—' }}</td>
-            <td><button onclick="lancerJob('/api/prospects/{{ p.id }}/generer', {type: 'initial'}, this)">Générer</button></td>
+            <td><button onclick="regenererUn({{ p.id }}, 'initial', this)">Générer</button></td>
         </tr>
         {% endfor %}
         </tbody>
@@ -68,4 +90,56 @@
     </div>
 </div>
 {% endif %}
+
+<div class="carte">
+    <h2>Composer un envoi sur mesure</h2>
+    <p class="aide">
+        Choisis exactement qui contacter, indépendamment du statut de
+        qualification — utile pour une relance ciblée par secteur ou par
+        poste sans repasser par la qualification automatique. Un désinscrit
+        reste bloqué quoi qu'il arrive.
+    </p>
+    <div class="filtres-selection">
+        <input type="text" id="filtre-poste" placeholder="Filtrer par poste..." oninput="filtrerSelection()">
+        <select id="filtre-statut" onchange="filtrerSelection()">
+            <option value="">Tous les statuts</option>
+            {% for s in statuts %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+        </select>
+        <select id="filtre-envois" onchange="filtrerSelection()">
+            <option value="">Envois : tous</option>
+            <option value="0">Jamais contacté</option>
+            <option value="1">Au moins 1 envoi</option>
+            <option value="2">Au moins 2 envois</option>
+        </select>
+    </div>
+    <div class="table-englobe">
+    <table id="table-selection">
+        <thead>
+            <tr>
+                <th><input type="checkbox" id="tout-cocher" onchange="toutCocher(this)"></th>
+                <th>Nom</th><th>Poste</th><th>Entreprise</th><th>Statut</th><th>Envois</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for p in selection %}
+        <tr data-poste="{{ (p.poste or '')|lower }}" data-statut="{{ p.statut }}" data-envois="{{ p.nb_envois }}">
+            <td><input type="checkbox" class="case-selection" value="{{ p.id }}" onchange="majCompteurSelection()"></td>
+            <td><a href="/prospect/{{ p.id }}">{{ p.prenom }} {{ p.nom }}</a></td>
+            <td>{{ p.poste or '—' }}</td>
+            <td>{{ p.entreprise or '—' }}</td>
+            <td>{{ p.statut }}</td>
+            <td class="mono">{{ p.nb_envois }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    <div class="rangee-boutons" style="margin-top:14px">
+        <button class="primaire" id="bouton-generer-selection" onclick="genererSelection('initial', this)" disabled>
+            Générer pour la sélection (<span id="compteur-selection">0</span>)
+        </button>
+    </div>
+</div>
 {% endblock %}

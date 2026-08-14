@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import json
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -43,7 +44,7 @@ import profils  # noqa: E402
 from agents import email_reader, email_sender, qualification  # noqa: E402
 from dashboard import jobs  # noqa: E402
 from db import database as db  # noqa: E402
-from integrations import gmail_client  # noqa: E402
+from integrations import gmail_client, hubspot_client  # noqa: E402
 
 app = Flask(__name__)
 app.secret_key = "prospection-locale"  # app locale mono-utilisateur
@@ -91,6 +92,21 @@ def _cle_api_manquante() -> bool:
     return not os.environ.get("ANTHROPIC_API_KEY")
 
 
+def _statut_gmail() -> dict:
+    if not gmail_client.CLIENT_SECRET_PATH.exists():
+        return {"etat": "sans_identifiants", "libelle": "Identifiants OAuth manquants"}
+    if not gmail_client.TOKEN_PATH.exists():
+        return {"etat": "pret", "libelle": "Prêt à autoriser"}
+    return {"etat": "connecte", "libelle": "Connecté"}
+
+
+def _statut_hubspot() -> dict:
+    token = db.get_reglage("hubspot_token")
+    if not token:
+        return {"etat": "non_connecte", "libelle": "Non connecté"}
+    return {"etat": "token_enregistre", "libelle": "Token enregistré"}
+
+
 def _quota_restant() -> int:
     limite = int(db.get_reglage("limite_envois_jour") or 50)
     return max(0, limite - db.envois_du_jour())
@@ -120,8 +136,11 @@ def detail(prospect_id: int):
         abort(404)
     interactions = db.list_interactions(prospect_id)
     brouillon = db.get_brouillon(prospect_id)
+    champs_perso = profils.load_champs(prospect.get("profil") or db.profil_actif())
+    valeurs_perso = json.loads(prospect.get("champs_perso") or "{}")
     return render_template("prospect.html", prospect=prospect,
-                           interactions=interactions, brouillon=brouillon, actif="dashboard")
+                           interactions=interactions, brouillon=brouillon,
+                           champs_perso=champs_perso, valeurs_perso=valeurs_perso, actif="dashboard")
 
 
 @app.route("/envoi")
@@ -134,8 +153,14 @@ def envoi():
         p["brouillon"] = brouillons.get(p["id"])
     avec = [p for p in prospects if p["brouillon"]]
     sans = [p for p in prospects if not p["brouillon"]]
+
+    selection = db.list_prospects_pour_selection(profil)
+    postes = sorted({p["poste"] for p in selection if p.get("poste")})
+
     return render_template("envoi.html", avec_brouillon=avec, sans_brouillon=sans,
-                           quota_restant=_quota_restant(), actif="envoi")
+                           quota_restant=_quota_restant(), actif="envoi",
+                           selection=selection, postes=postes, statuts=STATUTS,
+                           niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()))
 
 
 @app.route("/relances")
@@ -161,13 +186,15 @@ def stats():
     globales = db.stats_globales(profil)
     semaines = db.stats_envois_par_semaine(8)
     max_semaine = max([s["envois"] + s["relances"] for s in semaines], default=0)
+    tokens = db.stats_tokens(profil)
     return render_template("stats.html", g=globales, semaines=semaines,
-                           max_semaine=max_semaine, actif="stats")
+                           max_semaine=max_semaine, tokens=tokens, actif="stats")
 
 
 @app.route("/ajouter")
 def ajouter():
-    return render_template("ajouter.html", actif="ajouter")
+    profil = db.profil_actif()
+    return render_template("ajouter.html", actif="ajouter", champs_perso=profils.load_champs(profil))
 
 
 @app.route("/parametres")
@@ -175,14 +202,23 @@ def parametres():
     profil = db.profil_actif()
     icp = profils.load_icp(profil)
     brief = profils.load_brief(profil)
+    valeur_recherche = int(db.get_reglage("max_recherches_web") or 3)
+    # Retrouve le nom du niveau correspondant à la valeur stockée (approche
+    # par défaut si la valeur ne correspond à aucun niveau nommé standard).
+    niveau_defaut = next(
+        (nom for nom, val in email_sender.NIVEAUX_RECHERCHE.items() if val == valeur_recherche),
+        "normal",
+    )
     reglages = {
         "limite_envois_jour": db.get_reglage("limite_envois_jour"),
         "delai_relance_jours": db.get_reglage("delai_relance_jours"),
         "max_relances": db.get_reglage("max_relances"),
-        "max_recherches_web": db.get_reglage("max_recherches_web"),
+        "max_recherches_web": niveau_defaut,
     }
-    return render_template("parametres.html", icp=icp, brief=brief,
-                           reglages=reglages, actif="parametres")
+    return render_template("parametres.html", icp=icp, brief=brief, reglages=reglages,
+                           niveaux_recherche=email_sender.NIVEAUX_RECHERCHE,
+                           statut_gmail=_statut_gmail(), statut_hubspot=_statut_hubspot(),
+                           actif="parametres")
 
 
 # ================================================================ jobs (API)
@@ -234,43 +270,61 @@ def api_qualifier():
 def api_generer_brouillons():
     """Génère en masse les brouillons manquants (initiaux ou relances),
     plafonné au quota d'envois restant du jour — inutile de payer des
-    brouillons qu'on ne pourra pas envoyer aujourd'hui."""
+    brouillons qu'on ne pourra pas envoyer aujourd'hui.
+
+    Deux modes :
+    - automatique (pas de `ids`) : tous les qualifiés sans brouillon (email)
+      ou toutes les relances dues sans brouillon (relance).
+    - sur mesure (`ids` fourni) : exactement ces prospects, quel que soit
+      leur statut de qualification — seul un désinscrit reste bloqué, dans
+      tous les cas, à ce stade comme à l'envoi."""
     if _cle_api_manquante():
         return jsonify({"erreur": "ANTHROPIC_API_KEY n'est pas définie dans .env."}), 400
     donnees = request.get_json(silent=True) or {}
     type_ = donnees.get("type", "initial")
+    niveau_recherche = donnees.get("niveau_recherche")
+    contexte_batch = (donnees.get("contexte_batch") or "").strip()
     profil = db.profil_actif()
     icp = profils.load_icp(profil)
     brief = profils.load_brief(profil)
     brouillons = db.list_brouillons()
 
-    if type_ == "relance":
+    ids = donnees.get("ids")
+    if ids:
+        # Sélection sur mesure : n'importe quel statut, désinscrit exclu.
+        candidats = [db.get_prospect(i) for i in ids]
+        candidats = [p for p in candidats if p and p["statut"] != "desinscrit"
+                    and p.get("email") and p["id"] not in brouillons]
+    elif type_ == "relance":
         candidats = [p for p in _relances_dues(profil) if p["id"] not in brouillons]
     else:
         candidats = [p for p in db.list_prospects(statut="qualifie", profil=profil,
                                                   tri="score_qualification", ordre="desc")
                      if p.get("email") and p["id"] not in brouillons]
 
-    ids = donnees.get("ids")
-    if ids:
-        candidats = [p for p in candidats if p["id"] in ids]
-
     quota = _quota_restant()
     deja_prets = len(brouillons)
     plafond = max(0, quota - deja_prets)
     if plafond <= 0:
         return jsonify({"erreur": "Quota d'envois du jour déjà couvert par les brouillons existants."}), 400
+    tronque = len(candidats) > plafond
     candidats = candidats[:plafond]
     if not candidats:
         return jsonify({"erreur": "Aucun brouillon à générer."}), 400
 
     def traiter(p, log):
-        email_sender.generer_brouillon(p, icp, brief, type_=type_)
+        email_sender.generer_brouillon(p, icp, brief, type_=type_,
+                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')} ({p.get('entreprise','')})"
+
+    def terminer(log):
+        if tronque:
+            return f"⚠️ Limité au quota du jour restant ({plafond}) — le reste de la sélection n'a pas été généré."
+        return None
 
     libelle = "relance(s)" if type_ == "relance" else "brouillon(s)"
     try:
-        job_id = jobs.lancer(f"Rédaction de {len(candidats)} {libelle}", candidats, traiter)
+        job_id = jobs.lancer(f"Rédaction de {len(candidats)} {libelle}", candidats, traiter, terminer=terminer)
     except RuntimeError as exc:
         return jsonify({"erreur": str(exc)}), 409
     return jsonify({"job_id": job_id})
@@ -285,12 +339,15 @@ def api_generer_un(prospect_id: int):
         return jsonify({"erreur": "Prospect introuvable."}), 404
     donnees = request.get_json(silent=True) or {}
     type_ = donnees.get("type", "initial")
+    niveau_recherche = donnees.get("niveau_recherche")
+    contexte_batch = (donnees.get("contexte_batch") or "").strip()
     profil = prospect.get("profil") or db.profil_actif()
     icp = profils.load_icp(profil)
     brief = profils.load_brief(profil)
 
     def traiter(p, log):
-        email_sender.generer_brouillon(p, icp, brief, type_=type_)
+        email_sender.generer_brouillon(p, icp, brief, type_=type_,
+                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')}"
 
     try:
@@ -395,11 +452,18 @@ def api_statut(prospect_id: int):
 
 @app.route("/api/prospects/<int:prospect_id>/champs", methods=["POST"])
 def api_champs(prospect_id: int):
-    if not db.get_prospect(prospect_id):
+    prospect = db.get_prospect(prospect_id)
+    if not prospect:
         return jsonify({"erreur": "Prospect introuvable."}), 404
     donnees = request.get_json(silent=True) or {}
+    noms_champs = {c["nom"] for c in profils.load_champs(prospect.get("profil") or db.profil_actif())}
+    fixes = {k: v for k, v in donnees.items() if k not in noms_champs}
+    perso = {k: v for k, v in donnees.items() if k in noms_champs}
     try:
-        db.update_prospect(prospect_id, donnees)
+        if fixes:
+            db.update_prospect(prospect_id, fixes)
+        if perso:
+            db.update_champs_perso(prospect_id, perso)
     except Exception as exc:  # noqa: BLE001 - ex : doublon linkedin_url
         return jsonify({"erreur": str(exc)}), 400
     return jsonify({"ok": True, "message": "Fiche enregistrée."})
@@ -496,19 +560,20 @@ def parametres_brief():
 
 @app.route("/parametres/reglages", methods=["POST"])
 def parametres_reglages():
-    for cle, defaut, plafond in (
-        ("limite_envois_jour", 50, None),
-        ("delai_relance_jours", 7, None),
-        ("max_relances", 2, None),
-        ("max_recherches_web", 3, 5),
+    for cle, defaut in (
+        ("limite_envois_jour", 50),
+        ("delai_relance_jours", 7),
+        ("max_relances", 2),
     ):
         try:
             valeur = max(0, int(request.form.get(cle, defaut)))
         except ValueError:
             valeur = defaut
-        if plafond is not None:
-            valeur = min(valeur, plafond)
         db.set_reglage(cle, str(valeur))
+
+    niveau = request.form.get("max_recherches_web", "normal")
+    db.set_reglage("max_recherches_web", str(email_sender.NIVEAUX_RECHERCHE.get(niveau, 3)))
+
     flash("Réglages enregistrés.", "succes")
     return redirect(url_for("parametres"))
 
@@ -524,10 +589,132 @@ def parametres_tester_gmail():
     return redirect(url_for("parametres"))
 
 
+@app.route("/parametres/gmail/identifiants", methods=["POST"])
+def parametres_gmail_identifiants():
+    """Upload direct du client_secret.json téléchargé depuis Google Cloud
+    Console — évite d'avoir à le renommer et le déplacer soi-même dans
+    credentials/ via le Finder ou le Terminal."""
+    fichier = request.files.get("fichier")
+    if not fichier or fichier.filename == "":
+        flash("Aucun fichier sélectionné.", "erreur")
+        return redirect(url_for("parametres"))
+    try:
+        contenu = json.loads(fichier.read().decode("utf-8"))
+        if "installed" not in contenu and "web" not in contenu:
+            raise ValueError(
+                "Ce fichier ne ressemble pas à un identifiant OAuth Google "
+                "(section 'installed' ou 'web' introuvable)."
+            )
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as exc:
+        flash(f"Fichier invalide : {exc}", "erreur")
+        return redirect(url_for("parametres"))
+
+    gmail_client.CREDS_DIR.mkdir(exist_ok=True)
+    gmail_client.CLIENT_SECRET_PATH.write_text(json.dumps(contenu))
+    flash("Identifiants enregistrés — clique sur « Connecter Gmail » pour autoriser l'accès.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/gmail/deconnecter", methods=["POST"])
+def parametres_gmail_deconnecter():
+    gmail_client.TOKEN_PATH.unlink(missing_ok=True)
+    flash("Gmail déconnecté — reclique sur « Connecter Gmail » pour autoriser un autre compte.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/hubspot/token", methods=["POST"])
+def parametres_hubspot_token():
+    token = request.form.get("token", "").strip()
+    if not token:
+        flash("Token vide.", "erreur")
+        return redirect(url_for("parametres"))
+    db.set_reglage("hubspot_token", token)
+    flash("Token HubSpot enregistré — teste la connexion pour vérifier qu'il fonctionne.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/hubspot/deconnecter", methods=["POST"])
+def parametres_hubspot_deconnecter():
+    db.set_reglage("hubspot_token", "")
+    flash("HubSpot déconnecté.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/hubspot/tester", methods=["POST"])
+def parametres_hubspot_tester():
+    token = db.get_reglage("hubspot_token")
+    if not token:
+        flash("Aucun token HubSpot enregistré.", "erreur")
+        return redirect(url_for("parametres"))
+    try:
+        resultat = hubspot_client.tester_connexion(token)
+        suite = " (et bien d'autres)" if resultat["plus_de_contacts"] else ""
+        flash(f"Connexion HubSpot OK — au moins {resultat['nb_contacts_page']} contact(s) trouvé(s){suite}.", "succes")
+    except hubspot_client.ErreurHubSpot as exc:
+        flash(f"Erreur HubSpot : {exc}", "erreur")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/api/jobs/importer-hubspot", methods=["POST"])
+def api_importer_hubspot():
+    token = db.get_reglage("hubspot_token")
+    if not token:
+        return jsonify({"erreur": "Aucun token HubSpot enregistré."}), 400
+    profil = db.profil_actif()
+
+    # Le champ hubspot_id sert au dédoublonnage (pas d'URL LinkedIn fiable
+    # venant de HubSpot) — créé une seule fois, silencieusement s'il existe déjà.
+    try:
+        profils.ajouter_champ(profil, "hubspot_id", "HubSpot ID")
+    except ValueError:
+        pass  # déjà présent, rien à faire
+
+    try:
+        premiere_page, curseur = hubspot_client.lister_contacts(token, limit=100)
+    except hubspot_client.ErreurHubSpot as exc:
+        return jsonify({"erreur": str(exc)}), 400
+
+    tous_contacts = list(premiere_page)
+    # On récupère le reste des pages avant de lancer le job (pour connaître
+    # le total et afficher une vraie progression) — HubSpot répond vite,
+    # et un import perso reste de taille modeste.
+    while curseur:
+        try:
+            page, curseur = hubspot_client.lister_contacts(token, after=curseur, limit=100)
+        except hubspot_client.ErreurHubSpot as exc:
+            return jsonify({"erreur": f"Import interrompu pendant la pagination : {exc}"}), 400
+        tous_contacts.extend(page)
+        if len(tous_contacts) >= 2000:  # garde-fou : pas d'import sans fin par erreur de config
+            break
+
+    if not tous_contacts:
+        return jsonify({"erreur": "Aucun contact trouvé sur HubSpot."}), 400
+
+    def traiter(contact, log):
+        hs_id = contact.get("id")
+        if hs_id and db.prospect_existe_par_champ_perso("hubspot_id", hs_id, profil):
+            return None  # déjà importé, silencieux (pas la peine de logguer 500 lignes "déjà là")
+        data = hubspot_client.contact_vers_prospect(contact)
+        nom = f"{data.get('prenom','')} {data.get('nom','')}".strip() or "(sans nom)"
+        try:
+            db.add_prospect(data, champs_perso={"hubspot_id": hs_id} if hs_id else {})
+            return f"➕ {nom}"
+        except Exception as exc:  # noqa: BLE001 - doublon email/linkedin le plus probable
+            return f"⏭️ {nom} ignoré ({exc})"
+
+    try:
+        job_id = jobs.lancer(f"Import HubSpot ({len(tous_contacts)} contact(s) à vérifier)",
+                             tous_contacts, traiter)
+    except RuntimeError as exc:
+        return jsonify({"erreur": str(exc)}), 409
+    return jsonify({"job_id": job_id})
+
+
 # ================================================================ ajout
 
 @app.route("/ajouter/manuel", methods=["POST"])
 def ajouter_manuel():
+    profil = db.profil_actif()
     data = {
         "prenom": request.form.get("prenom", ""),
         "nom": request.form.get("nom", ""),
@@ -539,15 +726,45 @@ def ajouter_manuel():
         "linkedin_url": request.form.get("linkedin") or None,
         "notes": request.form.get("notes") or None,
         "source": "interface",
-        "profil": db.profil_actif(),
+        "profil": profil,
+    }
+    # Champs personnalisés : chaque <input name="champ_<nom>"> du formulaire,
+    # généré dynamiquement d'après config/profils/<profil>/champs.yaml.
+    noms_champs = {c["nom"] for c in profils.load_champs(profil)}
+    champs_perso = {
+        nom: request.form.get(f"champ_{nom}", "").strip()
+        for nom in noms_champs
+        if request.form.get(f"champ_{nom}", "").strip()
     }
     try:
-        db.add_prospect(data)
+        db.add_prospect(data, champs_perso=champs_perso)
         flash(f"{data['prenom']} {data['nom']} ajouté au profil « {data['profil']} ».", "succes")
         return redirect(url_for("index"))
     except Exception as exc:  # noqa: BLE001
         flash(f"Erreur lors de l'ajout : {exc}", "erreur")
         return redirect(url_for("ajouter"))
+
+
+@app.route("/ajouter/champs", methods=["POST"])
+def ajouter_champ_perso():
+    profil = db.profil_actif()
+    libelle = request.form.get("libelle", "")
+    nom = request.form.get("nom") or libelle
+    try:
+        profils.ajouter_champ(profil, nom, libelle)
+        flash(f"Champ « {libelle or nom} » ajouté.", "succes")
+    except ValueError as exc:
+        flash(str(exc), "erreur")
+    return redirect(url_for("ajouter"))
+
+
+@app.route("/ajouter/champs/supprimer", methods=["POST"])
+def supprimer_champ_perso():
+    profil = db.profil_actif()
+    nom = request.form.get("nom", "")
+    profils.supprimer_champ(profil, nom)
+    flash("Champ supprimé (les valeurs déjà enregistrées restent en base, juste masquées).", "succes")
+    return redirect(url_for("ajouter"))
 
 
 @app.route("/ajouter/csv", methods=["POST"])
@@ -576,12 +793,15 @@ def ajouter_csv():
         return redirect(url_for("ajouter"))
 
     try:
+        noms_champs = {c["nom"] for c in profils.load_champs(profil)}
         for row in csv_module.DictReader(io.StringIO(contenu)):
-            donnees = {k.strip(): v for k, v in row.items() if k and v}
+            brut = {k.strip(): v for k, v in row.items() if k and v}
+            donnees = {k: v for k, v in brut.items() if k not in noms_champs}
+            champs_perso = {k: v for k, v in brut.items() if k in noms_champs}
             donnees["profil"] = profil
             donnees.setdefault("source", "import_csv")
             try:
-                db.add_prospect(donnees)
+                db.add_prospect(donnees, champs_perso=champs_perso)
                 ajoutes += 1
             except Exception:  # noqa: BLE001 - doublon linkedin_url le plus souvent
                 ignores.append(row.get("nom") or row.get("email") or "?")

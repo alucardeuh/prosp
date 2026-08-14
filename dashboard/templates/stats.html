@@ -62,4 +62,38 @@
     <div class="vide">Aucun envoi enregistré pour l'instant — le graphe se remplira dès les premiers emails partis.</div>
     {% endif %}
 </div>
+
+<div class="carte">
+    <h2>Tokens consommés (API Claude)</h2>
+    {% if tokens.tokens_entree or tokens.tokens_sortie %}
+    <div class="tuiles">
+        <div class="tuile">
+            <div class="valeur">{{ tokens.tokens_entree }}</div>
+            <div class="legende">tokens en entrée</div>
+        </div>
+        <div class="tuile">
+            <div class="valeur">{{ tokens.tokens_sortie }}</div>
+            <div class="legende">tokens en sortie</div>
+        </div>
+        <div class="tuile">
+            <div class="valeur">{{ tokens.recherches_web }}</div>
+            <div class="legende">recherches web</div>
+        </div>
+        <div class="tuile">
+            <div class="valeur">${{ tokens.cout_recherches_usd }}</div>
+            <div class="legende">coût des recherches</div>
+        </div>
+    </div>
+    <p class="aide">
+        Coût des recherches web calculé au tarif fixe de $10/1000 (hors coût
+        des tokens du contenu rapporté, inclus dans les totaux ci-dessus).
+        Détail par type d'action :
+        {% for type_, d in tokens.par_type.items() %}
+        {{ type_ }} ({{ d.tokens_entree + d.tokens_sortie }} tokens){{ ", " if not loop.last }}
+        {% endfor %}
+    </p>
+    {% else %}
+    <div class="vide">Aucun appel API enregistré pour l'instant.</div>
+    {% endif %}
+</div>
 {% endblock %}

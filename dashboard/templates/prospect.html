@@ -31,6 +31,9 @@
                 <div><label>Taille</label><input name="taille_entreprise" value="{{ prospect.taille_entreprise or '' }}"></div>
                 <div><label>Email</label><input name="email" type="email" value="{{ prospect.email or '' }}"></div>
                 <div><label>LinkedIn</label><input name="linkedin_url" value="{{ prospect.linkedin_url or '' }}"></div>
+                {% for c in champs_perso %}
+                <div><label>{{ c.libelle }}</label><input name="{{ c.nom }}" value="{{ valeurs_perso.get(c.nom, '') }}"></div>
+                {% endfor %}
             </div>
             <div class="rangee-boutons" style="margin-top:14px">
                 <button type="submit" class="primaire">Enregistrer</button>
@@ -73,11 +76,26 @@
 </div>
 
 <div class="carte">
-    <h2>Historique</h2>
+    <h2>Historique
+        {% if interactions %}
+            {% set total_e = interactions | sum(attribute='tokens_entree') %}
+            {% set total_s = interactions | sum(attribute='tokens_sortie') %}
+            {% if total_e or total_s %}
+            <span class="aide" style="font-weight:400; text-transform:none; letter-spacing:0">
+                — {{ total_e + total_s }} tokens consommés au total sur ce contact
+            </span>
+            {% endif %}
+        {% endif %}
+    </h2>
     {% if interactions %}
         {% for i in interactions %}
         <div class="interaction i-{{ i.type }}">
-            <div class="meta">{{ (i.date or '')[:16] }} · {{ i.type }}</div>
+            <div class="meta">
+                {{ (i.date or '')[:16] }} · {{ i.type }}
+                {% if i.tokens_entree or i.tokens_sortie %}
+                · <span class="mono">{{ i.tokens_entree + i.tokens_sortie }} tokens{% if i.recherches_web %}, {{ i.recherches_web }} recherche(s) web{% endif %}</span>
+                {% endif %}
+            </div>
             <div class="texte">{{ i.contenu }}</div>
         </div>
         {% endfor %}
