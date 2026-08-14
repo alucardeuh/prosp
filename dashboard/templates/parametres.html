@@ -102,17 +102,6 @@
                 <label for="max_relances">Nombre max de relances par prospect</label>
                 <input type="number" id="max_relances" name="max_relances" min="0" max="5" value="{{ reglages.max_relances }}">
 
-                <label for="max_recherches_web">Recherches web par email initial</label>
-                <input type="number" id="max_recherches_web" name="max_recherches_web" min="0" max="5" value="{{ reglages.max_recherches_web }}">
-                <p class="aide">
-                    Combien d'actualités Claude peut chercher sur l'entreprise avant de
-                    rédiger un premier email (jamais pour les relances). <strong>0 = désactivé</strong> —
-                    l'email s'appuie alors uniquement sur le profil du prospect. C'est le
-                    principal poste de coût du projet : chaque recherche facture $10/1000
-                    en plus des tokens du contenu rapporté. Baisse ce chiffre si tu veux
-                    réduire la note, monte-le si tu préfères des emails plus personnalisés.
-                </p>
-
                 <div class="rangee-boutons" style="margin-top:16px">
                     <button type="submit" class="primaire">Enregistrer les réglages</button>
                 </div>
