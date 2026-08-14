@@ -23,6 +23,19 @@ from pathlib import Path
 
 import yaml
 
+from db.database import CHAMPS_PROSPECT
+
+# Identifiants déjà utilisés ailleurs dans le schéma prospects — un champ
+# personnalisé du même nom ferait dérouter silencieusement les données au
+# mauvais endroit (ex : un champ "poste" ferait perdre le vrai poste du
+# prospect, sa valeur atterrissant dans champs_perso au lieu de la colonne
+# réelle). CHAMPS_PROSPECT + les colonnes techniques non éditables.
+NOMS_RESERVES = CHAMPS_PROSPECT | {
+    "id", "statut", "score_qualification", "raison_qualification",
+    "signaux_positifs", "signaux_negatifs", "nb_relances", "champs_perso",
+    "date_creation", "date_derniere_action", "getsales_lead_uuid",
+}
+
 CONFIG_DIR = Path(__file__).parent / "config"
 PROFILS_DIR = CONFIG_DIR / "profils"
 
@@ -169,6 +182,11 @@ def ajouter_champ(profil: str, nom: str, libelle: str) -> None:
     identifiant = _identifiant_sur(nom)
     if not identifiant:
         raise ValueError("Nom de champ invalide.")
+    if identifiant in NOMS_RESERVES:
+        raise ValueError(
+            f"'{identifiant}' est déjà un champ existant (prénom, nom, poste...) — "
+            "choisis un autre nom pour éviter que les deux se marchent dessus."
+        )
     champs = load_champs(profil)
     if any(c["nom"] == identifiant for c in champs):
         raise ValueError(f"Le champ '{identifiant}' existe déjà.")

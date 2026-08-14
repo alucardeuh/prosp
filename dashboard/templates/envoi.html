@@ -61,10 +61,21 @@
         <textarea class="corps">{{ p.brouillon.corps }}</textarea>
     </div>
     <div class="pied">
-        <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
-        <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
-        <button onclick="regenererUn({{ p.id }}, 'initial', this)">Regénérer</button>
-        <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
+        <div class="actions-envoi">
+            <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
+            <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
+            <button onclick="regenererUn({{ p.id }}, 'initial', this)">Regénérer</button>
+            <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
+        </div>
+        <div class="programmation" id="programmation-{{ p.id }}">
+            {% if p.brouillon.date_envoi_prevue %}
+            <span class="pastille pastille-attente">Programmé : {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }}</span>
+            <button onclick="annulerProgrammation({{ p.id }}, this)">Annuler</button>
+            {% else %}
+            <input type="datetime-local" class="champ-date-programmation">
+            <button onclick="programmerEnvoi({{ p.id }}, this)">Programmer</button>
+            {% endif %}
+        </div>
     </div>
 </div>
 {% endfor %}

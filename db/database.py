@@ -58,6 +58,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 conn.execute("ALTER TABLE prospects ADD COLUMN nb_relances INTEGER NOT NULL DEFAULT 0")
             if "champs_perso" not in colonnes:
                 conn.execute("ALTER TABLE prospects ADD COLUMN champs_perso TEXT NOT NULL DEFAULT '{}'")
+            if "email_verifie" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN email_verifie TEXT")
         if "interactions" in tables:
             cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
             if "gmail_thread_id" not in cols_int:
@@ -72,6 +74,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
             for col in ("tokens_entree", "tokens_sortie", "recherches_web"):
                 if col not in cols_br:
                     conn.execute(f"ALTER TABLE brouillons ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+            if "date_envoi_prevue" not in cols_br:
+                conn.execute("ALTER TABLE brouillons ADD COLUMN date_envoi_prevue TEXT")
         conn.executescript(SCHEMA_PATH.read_text())
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
@@ -169,8 +173,16 @@ def update_prospect(prospect_id: int, data: dict, db_path: Path = DB_PATH) -> No
     data = {k: v for k, v in data.items() if k in CHAMPS_PROSPECT}
     if not data:
         return
-    assignations = ", ".join(f"{k} = ?" for k in data)
     with get_connection(db_path) as conn:
+        # L'email change -> le dernier résultat de vérification n'a plus de
+        # sens (c'était pour une AUTRE adresse) : on le remet à zéro plutôt
+        # que de laisser un statut "valide"/"invalide" trompeur.
+        if "email" in data:
+            actuel = conn.execute("SELECT email FROM prospects WHERE id = ?", (prospect_id,)).fetchone()
+            if not actuel or actuel["email"] != data["email"]:
+                data = dict(data)
+                data["email_verifie"] = None
+        assignations = ", ".join(f"{k} = ?" for k in data)
         conn.execute(
             f"UPDATE prospects SET {assignations}, date_derniere_action = CURRENT_TIMESTAMP WHERE id = ?",
             list(data.values()) + [prospect_id],
@@ -533,6 +545,45 @@ def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
         }
 
 
+def reparer_collision_champ_perso(nom_champ: str, profil: str, db_path: Path = DB_PATH) -> int:
+    """Migration ponctuelle : une version antérieure permettait de créer un
+    champ personnalisé portant le même nom qu'un champ fixe (ex : 'poste'),
+    ce qui faisait dérouter silencieusement les valeurs saisies dans
+    champs_perso au lieu de la vraie colonne. Recopie la valeur vers la
+    vraie colonne si elle est vide, retire la clé du JSON dans tous les cas.
+    Retourne le nombre de prospects où une valeur a réellement été récupérée.
+
+    nom_champ DOIT être un nom de colonne réelle (vérifié contre
+    CHAMPS_PROSPECT) avant d'être interpolé dans le SQL — même garde-fou que
+    update_prospect, qui fait déjà ce type d'interpolation contrôlée."""
+    if nom_champ not in CHAMPS_PROSPECT:
+        return 0
+    corriges = 0
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            f"SELECT id, champs_perso, {nom_champ} AS valeur_actuelle FROM prospects WHERE profil = ?",
+            (profil,),
+        ).fetchall()
+        for row in rows:
+            valeurs = json.loads(row["champs_perso"] or "{}")
+            if nom_champ not in valeurs:
+                continue
+            valeur_perso = valeurs.pop(nom_champ)
+            nouveau_json = json.dumps(valeurs, ensure_ascii=False)
+            if not row["valeur_actuelle"] and valeur_perso:
+                conn.execute(
+                    f"UPDATE prospects SET {nom_champ} = ?, champs_perso = ? WHERE id = ?",
+                    (valeur_perso, nouveau_json, row["id"]),
+                )
+                corriges += 1
+            else:
+                conn.execute(
+                    "UPDATE prospects SET champs_perso = ? WHERE id = ?",
+                    (nouveau_json, row["id"]),
+                )
+    return corriges
+
+
 def prospect_existe_par_champ_perso(cle: str, valeur: str, profil: str, db_path: Path = DB_PATH) -> bool:
     """Vérifie si un prospect du profil a déjà cette valeur pour ce champ
     personnalisé — sert à éviter les doublons à l'import HubSpot, qui n'a
@@ -545,6 +596,32 @@ def prospect_existe_par_champ_perso(cle: str, valeur: str, profil: str, db_path:
             (profil, cle, valeur),
         ).fetchone()
         return row is not None
+
+
+def set_email_verifie(prospect_id: int, statut: str, db_path: Path = DB_PATH) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE prospects SET email_verifie = ? WHERE id = ?", (statut, prospect_id))
+
+
+def programmer_brouillon(prospect_id: int, date_envoi: str | None, db_path: Path = DB_PATH) -> None:
+    """date_envoi : 'YYYY-MM-DDTHH:MM' (heure locale de la machine qui fait
+    tourner l'app), ou None pour annuler une programmation existante."""
+    with get_connection(db_path) as conn:
+        conn.execute(
+            "UPDATE brouillons SET date_envoi_prevue = ? WHERE prospect_id = ?",
+            (date_envoi, prospect_id),
+        )
+
+
+def list_brouillons_programmes_dus(db_path: Path = DB_PATH) -> list[dict]:
+    """Brouillons dont l'échéance programmée est atteinte — vérifié par le
+    planificateur en arrière-plan (dashboard/planificateur.py)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM brouillons WHERE date_envoi_prevue IS NOT NULL "
+            "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime')"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
 
 def set_getsales_lead_uuid(prospect_id: int, lead_uuid: str, db_path: Path = DB_PATH) -> None:

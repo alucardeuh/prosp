@@ -29,13 +29,20 @@ from dotenv import load_dotenv
 load_dotenv()
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import email_verification  # noqa: E402
 import profils  # noqa: E402
 from agents import qualification  # noqa: E402 - réutilise _usage_de, pas de duplication
 from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
 
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+# Modèle de rédaction : contrairement à la qualification et au classement
+# des réponses, ici la qualité du texte compte vraiment — c'est ce qui part
+# chez un vrai prospect. claude-sonnet-5 (dernière génération Sonnet) est à
+# la fois plus récent ET moins cher que l'ancien défaut claude-sonnet-4-6 —
+# pas de compromis qualité/coût ici, juste une mise à jour. Surchargeable
+# via .env (CLAUDE_MODEL=...).
+MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
 def _outil_recherche_web(max_uses: int) -> dict:
     """Outil serveur Anthropic : Claude décide seul quand chercher, l'API
@@ -138,44 +145,21 @@ même email (pas d'humour au milieu d'un email factuel, pas de familiarité
 soudaine après un paragraphe formel)."""
 
 
-def build_prompt(prospect: dict, icp: dict, brief: dict, avec_recherche: bool = True,
-                 contexte_batch: str = "") -> str:
+def build_system_email(icp: dict, brief: dict, avec_recherche: bool = True,
+                       contexte_batch: str = "") -> list[dict]:
+    """2 points de cache :
+    - bloc profil (produit, ton, règles d'écriture, signature) : identique
+      pour TOUT email initial de ce profil, quel que soit le lot — reste en
+      cache à travers plusieurs lots tant qu'ils s'enchaînent dans les 5
+      minutes (ou 1h si un jour on active le cache longue durée).
+    - bloc lot (recherche on/off, contexte de ce lot précis) : change d'un
+      lot à l'autre, mais identique pour tous les prospects D'UN MÊME
+      lot — cacheable entre les prospects de CE lot.
+    Sur un lot de N emails, seul le premier appel paie le plein tarif pour
+    ces deux blocs ; les N-1 suivants les lisent en cache à ~10% du prix."""
     produit = icp.get("produit", {})
-
-    if avec_recherche:
-        bloc_redaction = f"""# Étape 1 — recherche (obligatoire avant de rédiger)
-Cherche sur le web une actualité récente et pertinente sur l'entreprise
-"{prospect.get('entreprise', '')}" (levée de fonds, recrutement clé,
-expansion, nouveau produit, résultats financiers, changement de
-direction...). N'utilise cette info QUE si elle est réelle et solide —
-ne mentionne jamais une actualité inventée ou incertaine. Si tu ne
-trouves rien de fiable, base-toi uniquement sur le profil du prospect
-ci-dessous, sans forcer une actualité qui n'existe pas.
-
-# Étape 2 — rédaction
-Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
-résultat final. Ne réponds jamais en texte libre à la fin."""
-    else:
-        bloc_redaction = """# Rédaction
-La recherche web est désactivée pour cet envoi (réglage du profil dans
-Paramètres) : base-toi uniquement sur le profil du prospect ci-dessous,
-sans jamais inventer une actualité que tu n'as pas vérifiée. Appelle
-l'outil `rediger_email` avec ton résultat final. Ne réponds jamais en
-texte libre à la fin."""
-
-    bloc_contexte = ""
-    if contexte_batch and contexte_batch.strip():
-        bloc_contexte = f"""
-
-# Contexte donné pour ce lot d'envoi précis (par la personne qui a lancé
-cette génération — à prendre en compte en priorité, ça décrit l'angle ou
-la raison de cette campagne précise)
-{contexte_batch.strip()}"""
-
-    return f"""Tu es un agent qui rédige des emails de prospection B2B
+    bloc_profil = f"""Tu es un agent qui rédige des emails de prospection B2B
 personnalisés.
-
-{bloc_redaction}
 
 {REGLES_ECRITURE}
 
@@ -188,7 +172,46 @@ Ton : {brief.get('ton', '')}
 Longueur max : {brief.get('longueur_max_mots', 150)} mots
 Structure : {brief.get('structure_attendue', '')}
 
-# Ce prospect précis
+# Obligatoire à la fin de chaque email
+{brief.get('signature', '')}
+{brief.get('mention_obligatoire', '')}"""
+
+    if avec_recherche:
+        bloc_lot = """# Étape 1 — recherche (obligatoire avant de rédiger)
+Cherche sur le web une actualité récente et pertinente sur l'entreprise du
+prospect (levée de fonds, recrutement clé, expansion, nouveau produit,
+résultats financiers, changement de direction...). N'utilise cette info QUE
+si elle est réelle et solide — ne mentionne jamais une actualité inventée ou
+incertaine. Si tu ne trouves rien de fiable, base-toi uniquement sur le
+profil du prospect, sans forcer une actualité qui n'existe pas.
+
+# Étape 2 — rédaction
+Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
+résultat final. Ne réponds jamais en texte libre à la fin."""
+    else:
+        bloc_lot = """# Rédaction
+La recherche web est désactivée pour ce lot (réglage choisi pour cet envoi) :
+base-toi uniquement sur le profil du prospect, sans jamais inventer une
+actualité que tu n'as pas vérifiée. Appelle l'outil `rediger_email` avec ton
+résultat final. Ne réponds jamais en texte libre à la fin."""
+
+    if contexte_batch and contexte_batch.strip():
+        bloc_lot += f"""
+
+# Contexte donné pour ce lot d'envoi précis (par la personne qui a lancé
+cette génération — à prendre en compte en priorité, ça décrit l'angle ou
+la raison de cette campagne précise)
+{contexte_batch.strip()}"""
+
+    return [
+        {"type": "text", "text": bloc_profil, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": bloc_lot, "cache_control": {"type": "ephemeral"}},
+    ]
+
+
+def build_prompt(prospect: dict) -> str:
+    """Partie du prompt PROPRE à ce prospect — jamais mise en cache."""
+    return f"""# Ce prospect précis
 Prénom : {prospect.get('prenom', '')}
 Nom : {prospect.get('nom', '')}
 Poste : {prospect.get('poste', '')}
@@ -197,11 +220,6 @@ Secteur : {prospect.get('secteur', '')}
 Taille d'entreprise : {prospect.get('taille_entreprise', '')}
 Notes : {prospect.get('notes', '')}
 Raison de qualification (pourquoi ce prospect a été retenu) : {prospect.get('raison_qualification', '')}
-{bloc_contexte}
-
-# Obligatoire à la fin de l'email
-{brief.get('signature', '')}
-{brief.get('mention_obligatoire', '')}
 
 Rédige un email qui montre concrètement qu'on connaît la situation de CE
 prospect précis — pas un email générique qui pourrait être envoyé à
@@ -209,18 +227,12 @@ n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
 sinon sur un détail réel de son profil ci-dessus."""
 
 
-def build_prompt_relance(prospect: dict, icp: dict, brief: dict, premier_email: str,
-                         contexte_batch: str = "") -> str:
+def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "") -> list[dict]:
+    """Même logique à 2 points de cache que build_system_email, adaptée aux
+    relances (jamais de recherche web, donc pas de variante recherche
+    on/off à gérer dans le bloc lot)."""
     produit = icp.get("produit", {})
-    bloc_contexte = ""
-    if contexte_batch and contexte_batch.strip():
-        bloc_contexte = f"""
-
-# Contexte donné pour ce lot de relances précis (par la personne qui a
-lancé cette génération — à prendre en compte en priorité)
-{contexte_batch.strip()}"""
-
-    return f"""Tu es un agent qui rédige des emails de RELANCE de
+    bloc_profil = f"""Tu es un agent qui rédige des emails de RELANCE de
 prospection B2B. Le prospect a déjà reçu un premier email resté sans
 réponse — tu rédiges le suivi.
 
@@ -237,7 +249,7 @@ texte libre.
 - Aucune culpabilisation, aucun reproche de non-réponse.
 - Se termine par une question simple à laquelle il est facile de répondre.
 - L'objet reprend le fil : "Re: <objet initial>" si un objet initial est
-  identifiable dans le premier email ci-dessous, sinon un objet court.
+  identifiable dans le premier email, sinon un objet court.
 
 # Ce qu'on vend
 {produit.get('description', '')}
@@ -246,20 +258,33 @@ Proposition de valeur : {produit.get('proposition_de_valeur', '')}
 # Ton
 {brief.get('ton', '')}
 
-# Ce prospect
+# Obligatoire à la fin de chaque email
+{brief.get('signature', '')}
+{brief.get('mention_obligatoire', '')}"""
+
+    bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
+    if contexte_batch and contexte_batch.strip():
+        bloc_lot = f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
+lancé cette génération — à prendre en compte en priorité)
+{contexte_batch.strip()}"""
+
+    return [
+        {"type": "text", "text": bloc_profil, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": bloc_lot, "cache_control": {"type": "ephemeral"}},
+    ]
+
+
+def build_prompt_relance(prospect: dict, premier_email: str) -> str:
+    """Partie propre à ce prospect — jamais mise en cache."""
+    return f"""# Ce prospect
 {prospect.get('prenom', '')} {prospect.get('nom', '')} — {prospect.get('poste', '')} chez {prospect.get('entreprise', '')}
 Relances déjà envoyées : {prospect.get('nb_relances', 0)}
 
 # Premier email envoyé (pour référence, ne pas le répéter)
-{premier_email or '(contenu du premier email non disponible — reste générique sur la référence au message précédent)'}
-{bloc_contexte}
-
-# Obligatoire à la fin de l'email
-{brief.get('signature', '')}
-{brief.get('mention_obligatoire', '')}"""
+{premier_email or '(contenu du premier email non disponible — reste générique sur la référence au message précédent)'}"""
 
 
-def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> tuple[dict, dict]:
+def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherches: int = 0) -> tuple[dict, dict]:
     if client is None:
         import anthropic
 
@@ -273,6 +298,7 @@ def _appeler_redaction(prompt: str, client=None, max_recherches: int = 0) -> tup
         model=MODEL,
         max_tokens=4096,
         tools=tools,
+        system=system,
         messages=[{"role": "user", "content": prompt}],
     )
     usage = qualification._usage_de(response)
@@ -293,9 +319,8 @@ def redact_email(prospect: dict, icp: dict, brief: dict, client=None,
     est un texte libre propre à CE lot d'envoi, jamais persisté ailleurs que
     dans le prompt de cette génération précise. Retourne ({objet, corps}, usage)."""
     max_recherches = _max_recherches_web(niveau_recherche)
-    prompt = build_prompt(prospect, icp, brief, avec_recherche=max_recherches > 0,
-                          contexte_batch=contexte_batch)
-    return _appeler_redaction(prompt, client, max_recherches=max_recherches)
+    system = build_system_email(icp, brief, avec_recherche=max_recherches > 0, contexte_batch=contexte_batch)
+    return _appeler_redaction(system, build_prompt(prospect), client, max_recherches=max_recherches)
 
 
 def redact_relance(prospect: dict, icp: dict, brief: dict, client=None,
@@ -304,10 +329,8 @@ def redact_relance(prospect: dict, icp: dict, brief: dict, client=None,
     Pas de recherche web : la relance s'appuie sur le fil existant."""
     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
     premier_email = derniere["contenu"] if derniere else ""
-    return _appeler_redaction(
-        build_prompt_relance(prospect, icp, brief, premier_email, contexte_batch=contexte_batch),
-        client, max_recherches=0,
-    )
+    system = build_system_relance(icp, brief, contexte_batch=contexte_batch)
+    return _appeler_redaction(system, build_prompt_relance(prospect, premier_email), client, max_recherches=0)
 
 
 def _fake_redaction(prospect: dict, relance: bool = False) -> tuple[dict, dict]:
@@ -316,6 +339,20 @@ def _fake_redaction(prospect: dict, relance: bool = False) -> tuple[dict, dict]:
         "objet": f"[DRY-RUN] {prefixe} pour {prospect.get('prenom', '')}",
         "corps": "[DRY-RUN] Corps d'email simulé, aucun appel API réel n'a été fait.",
     }, {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
+
+
+def _verifier_email_prospect(prospect: dict) -> dict:
+    """Vérifie l'email d'un prospect en s'appuyant sur le résultat mis en
+    cache en base (colonne email_verifie) — ne relance une vraie
+    vérification DNS que si cette adresse précise n'a jamais été vérifiée
+    (le cache est remis à zéro automatiquement dès que l'email change,
+    voir db.update_prospect). Retourne {statut, raison}."""
+    statut_cache = prospect.get("email_verifie")
+    if statut_cache:
+        return {"statut": statut_cache, "raison": "(résultat déjà vérifié, mis en cache)"}
+    resultat = email_verification.verifier(prospect.get("email"))
+    db.set_email_verifie(prospect["id"], resultat["statut"])
+    return resultat
 
 
 def generer_brouillon(prospect: dict, icp: dict, brief: dict,
@@ -327,7 +364,18 @@ def generer_brouillon(prospect: dict, icp: dict, brief: dict,
     niveau_recherche et contexte_batch ne s'appliquent qu'aux emails initiaux
     (une relance ne fait jamais de recherche, et le contexte de batch reste
     pertinent pour elle aussi si fourni). Brique utilisée par le CLI et par
-    les jobs du dashboard."""
+    les jobs du dashboard.
+
+    Vérifie l'email AVANT d'appeler l'API : inutile de payer une rédaction
+    pour une adresse dont le domaine est confirmé incapable de recevoir du
+    courrier — la vérification est gratuite (DNS), la génération ne l'est pas."""
+    if not dry_run:
+        verif = _verifier_email_prospect(prospect)
+        if verif["statut"] == "invalide":
+            raise ValueError(
+                f"Email invalide ({prospect.get('email')}) : {verif['raison']} "
+                "— génération annulée pour ne pas gaspiller de tokens."
+            )
     if dry_run:
         redaction, usage = _fake_redaction(prospect, relance=(type_ == "relance"))
     elif type_ == "relance":
@@ -344,6 +392,7 @@ def generer_brouillon(prospect: dict, icp: dict, brief: dict,
 def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> dict:
     """Envoie le brouillon en attente d'un prospect, avec tous les garde-fous :
     - refuse si le prospect est désinscrit (obligation légale)
+    - refuse si l'email est confirmé invalide (syntaxe ou domaine sans MX/A)
     - refuse si la limite d'envois du jour est atteinte (délivrabilité)
     - stocke objet + corps dans l'historique (nécessaire aux futures relances)
     - met à jour statut et compteur de relances selon le type de brouillon
@@ -356,6 +405,14 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
         raise ValueError("Ce prospect s'est désinscrit — envoi bloqué (obligation légale).")
     if not prospect.get("email"):
         raise ValueError("Ce prospect n'a pas d'adresse email.")
+    if not dry_run:
+        # Défense en profondeur : la génération a déjà filtré les adresses
+        # invalides, mais le brouillon a pu être créé avant l'ajout de cette
+        # vérification, ou l'email édité après coup — on revérifie ici,
+        # dernière porte avant un envoi réel.
+        verif = _verifier_email_prospect(prospect)
+        if verif["statut"] == "invalide":
+            raise ValueError(f"Email invalide ({prospect['email']}) : {verif['raison']} — envoi refusé.")
 
     limite = int(db.get_reglage("limite_envois_jour") or 50)
     if db.envois_du_jour() >= limite:

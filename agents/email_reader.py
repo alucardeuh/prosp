@@ -37,7 +37,10 @@ from db import database as db  # noqa: E402
 from integrations import gmail_client  # noqa: E402
 
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+# Même raisonnement que agents/qualification.py : classer une réponse
+# (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
+# rédaction — Haiku suffit, moitié prix. Surchargeable via CLAUDE_MODEL_RAPIDE.
+MODEL = os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
 
 TAILLE_LOT_GMAIL = 20  # adresses par requête Gmail groupée
 

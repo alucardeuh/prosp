@@ -29,7 +29,16 @@
                 <div><label>Entreprise</label><input name="entreprise" value="{{ prospect.entreprise or '' }}"></div>
                 <div><label>Secteur</label><input name="secteur" value="{{ prospect.secteur or '' }}"></div>
                 <div><label>Taille</label><input name="taille_entreprise" value="{{ prospect.taille_entreprise or '' }}"></div>
-                <div><label>Email</label><input name="email" type="email" value="{{ prospect.email or '' }}"></div>
+                <div>
+                    <label>Email</label>
+                    <input name="email" type="email" value="{{ prospect.email or '' }}" id="champ-email">
+                    <div style="margin-top:6px; display:flex; align-items:center; gap:8px">
+                        <span class="pastille pastille-{{ 'ok' if prospect.email_verifie == 'valide' else ('erreur' if prospect.email_verifie == 'invalide' else 'off') }}" id="pastille-email">
+                            {{ {'valide': 'Vérifié', 'invalide': 'Invalide', 'inconnu': 'Indéterminé'}.get(prospect.email_verifie, 'Non vérifié') }}
+                        </span>
+                        <button type="button" onclick="verifierEmail({{ prospect.id }}, this)" style="padding:3px 10px; font-size:12px">Vérifier</button>
+                    </div>
+                </div>
                 <div><label>LinkedIn</label><input name="linkedin_url" value="{{ prospect.linkedin_url or '' }}"></div>
                 {% for c in champs_perso %}
                 <div><label>{{ c.libelle }}</label><input name="{{ c.nom }}" value="{{ valeurs_perso.get(c.nom, '') }}"></div>
@@ -112,6 +121,18 @@ async function sauverChamps(e, id) {
   const r = await action("/api/prospects/" + id + "/champs", champs);
   if (r && r.ok) toast("Fiche enregistrée.", "succes");
   return false;
+}
+async function verifierEmail(id, bouton) {
+  bouton.disabled = true;
+  const r = await action("/api/prospects/" + id + "/verifier-email");
+  bouton.disabled = false;
+  if (!r || !r.ok) return;
+  const pastille = document.getElementById("pastille-email");
+  const libelles = { valide: "Vérifié", invalide: "Invalide", inconnu: "Indéterminé" };
+  const classes = { valide: "ok", invalide: "erreur", inconnu: "off" };
+  pastille.textContent = libelles[r.statut] || "Non vérifié";
+  pastille.className = "pastille pastille-" + (classes[r.statut] || "off");
+  toast(r.raison, r.statut === "invalide" ? "erreur" : "succes");
 }
 async function ajouterNote(e, id) {
   e.preventDefault();

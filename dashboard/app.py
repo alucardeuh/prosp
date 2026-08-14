@@ -40,9 +40,10 @@ from flask import (
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import email_verification  # noqa: E402
 import profils  # noqa: E402
 from agents import email_reader, email_sender, qualification  # noqa: E402
-from dashboard import jobs  # noqa: E402
+from dashboard import jobs, planificateur  # noqa: E402
 from db import database as db  # noqa: E402
 from integrations import gmail_client, hubspot_client  # noqa: E402
 
@@ -62,6 +63,35 @@ LIBELLES_STATUT = {
 # des profils n'ont aucune raison de retourner sur le disque à chaque clic.
 db.init_db()
 profils.init_profils()
+
+
+def _reparer_collisions_champs_perso() -> None:
+    """Migration ponctuelle : une version antérieure ne bloquait pas la
+    création d'un champ personnalisé portant le même nom qu'un champ fixe
+    (ex : 'poste'), ce qui faisait dérouter silencieusement les valeurs
+    saisies dans champs_perso au lieu de la vraie colonne. Répare toute
+    collision déjà présente, sans action manuelle. Ne fait plus rien une
+    fois les collisions nettoyées (idempotent, coût négligeable au démarrage)."""
+    for profil in profils.list_profils():
+        champs = profils.load_champs(profil)
+        en_collision = [c for c in champs if c["nom"] in profils.NOMS_RESERVES]
+        if not en_collision:
+            continue
+        for c in en_collision:
+            n = db.reparer_collision_champ_perso(c["nom"], profil)
+            if n:
+                print(f"Migration : {n} prospect(s) du profil « {profil} » corrigé(s) "
+                      f"(champ « {c['nom']} » mal routé récupéré).", file=sys.stderr)
+        profils.save_champs(profil, [c for c in champs if c["nom"] not in profils.NOMS_RESERVES])
+        print(f"Migration : champ(s) en collision retiré(s) du profil « {profil} » : "
+              f"{', '.join(c['nom'] for c in en_collision)}.", file=sys.stderr)
+
+
+_reparer_collisions_champs_perso()
+
+# Le planificateur tourne en tâche de fond dès le démarrage : vérifie toutes
+# les 30s s'il y a un envoi programmé arrivé à échéance (voir planificateur.py).
+planificateur.demarrer()
 
 
 @app.context_processor
@@ -429,6 +459,24 @@ def api_sauver_brouillon(prospect_id: int):
     return jsonify({"ok": True, "message": "Brouillon enregistré."})
 
 
+@app.route("/api/prospects/<int:prospect_id>/programmer", methods=["POST"])
+def api_programmer(prospect_id: int):
+    brouillon = db.get_brouillon(prospect_id)
+    if not brouillon:
+        return jsonify({"erreur": "Pas de brouillon en attente pour ce prospect."}), 404
+    donnees = request.get_json(silent=True) or {}
+    date_envoi = (donnees.get("date_envoi") or "").strip() or None
+    if date_envoi:
+        try:
+            from datetime import datetime
+            datetime.fromisoformat(date_envoi)
+        except ValueError:
+            return jsonify({"erreur": "Date invalide."}), 400
+    db.programmer_brouillon(prospect_id, date_envoi)
+    message = f"Envoi programmé pour le {date_envoi.replace('T', ' à ')}." if date_envoi else "Programmation annulée."
+    return jsonify({"ok": True, "message": message, "date_envoi": date_envoi})
+
+
 @app.route("/api/prospects/<int:prospect_id>/passer", methods=["POST"])
 def api_passer(prospect_id: int):
     db.delete_brouillon(prospect_id)
@@ -467,6 +515,18 @@ def api_champs(prospect_id: int):
     except Exception as exc:  # noqa: BLE001 - ex : doublon linkedin_url
         return jsonify({"erreur": str(exc)}), 400
     return jsonify({"ok": True, "message": "Fiche enregistrée."})
+
+
+@app.route("/api/prospects/<int:prospect_id>/verifier-email", methods=["POST"])
+def api_verifier_email(prospect_id: int):
+    prospect = db.get_prospect(prospect_id)
+    if not prospect:
+        return jsonify({"erreur": "Prospect introuvable."}), 404
+    if not prospect.get("email"):
+        return jsonify({"erreur": "Ce prospect n'a pas d'adresse email."}), 400
+    resultat = email_verification.verifier(prospect["email"])
+    db.set_email_verifie(prospect_id, resultat["statut"])
+    return jsonify({"ok": True, "statut": resultat["statut"], "raison": resultat["raison"]})
 
 
 @app.route("/api/prospects/<int:prospect_id>/note", methods=["POST"])

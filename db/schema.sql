@@ -38,6 +38,13 @@ CREATE TABLE IF NOT EXISTS prospects (
     -- retires une variable. {"nom_technique": "valeur", ...}
     champs_perso        TEXT NOT NULL DEFAULT '{}',
 
+    -- Résultat mis en cache de la dernière vérification d'email (syntaxe +
+    -- MX) : NULL = jamais vérifié, 'valide' / 'invalide' / 'inconnu'.
+    -- Remis à NULL dès que l'email change (voir update_prospect), pour
+    -- forcer une nouvelle vérification plutôt que de garder un résultat
+    -- devenu obsolète.
+    email_verifie        TEXT,
+
     -- Relances : incrémenté à chaque relance envoyée, comparé au max configuré.
     nb_relances         INTEGER NOT NULL DEFAULT 0,
 
@@ -98,6 +105,13 @@ CREATE TABLE IF NOT EXISTS brouillons (
     tokens_entree   INTEGER NOT NULL DEFAULT 0,
     tokens_sortie   INTEGER NOT NULL DEFAULT 0,
     recherches_web  INTEGER NOT NULL DEFAULT 0,
+
+    -- Envoi programmé (facultatif) : NULL = envoi manuel classique (clic sur
+    -- "Envoyer"). Une date/heure ISO locale ('YYYY-MM-DDTHH:MM') fait
+    -- envoyer ce brouillon automatiquement dès que cette échéance est
+    -- atteinte, tant que l'app tourne (voir dashboard/planificateur.py) —
+    -- reste envoyable manuellement avant l'échéance si besoin.
+    date_envoi_prevue TEXT,
 
     date_generation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

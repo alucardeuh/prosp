@@ -229,6 +229,7 @@ input:focus, textarea:focus, select.champ:focus { border-color: var(--pine); out
 .pastille-ok { background: rgba(19, 94, 72, 0.12); color: var(--pine); }
 .pastille-attente { background: rgba(180, 112, 15, 0.14); color: var(--amber); }
 .pastille-off { background: rgba(27, 36, 32, 0.08); color: var(--faint); }
+.pastille-erreur { background: rgba(175, 59, 43, 0.12); color: var(--brick); }
 table { width: 100%; border-collapse: collapse; }
 th, td { padding: 9px 14px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13.5px; white-space: nowrap; }
 th { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: var(--faint); user-select: none; }
@@ -271,6 +272,8 @@ td .score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
   display: flex; justify-content: space-between; align-items: center; gap: 10px;
   padding: 12px 20px; border-top: 1px solid var(--line); flex-wrap: wrap;
 }
+.pied .actions-envoi, .pied .programmation { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.champ-date-programmation { font-size: 12.5px; padding: 5px 8px; width: auto; }
 .etiquette-relance {
   font-family: var(--mono); font-size: 11px; font-weight: 600;
   background: var(--amber-soft); color: var(--amber);

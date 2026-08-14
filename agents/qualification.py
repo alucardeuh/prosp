@@ -31,7 +31,11 @@ from db import database as db  # noqa: E402
 
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env
 # (CLAUDE_MODEL=...) sans toucher au code.
-MODEL = os.environ.get("CLAUDE_MODEL", "claude-sonnet-4-6")
+# Modèle "rapide" : qualifier un prospect (comparer à une grille de critères,
+# sortir un score) est une tâche mécanique de classification, pas de la
+# rédaction — Haiku fait aussi bien pour ce genre de tâche que Sonnet, à
+# environ la moitié du prix. Surchargeable via .env (CLAUDE_MODEL_RAPIDE=...).
+MODEL = os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
 
 TOOL_QUALIFICATION = {
     "name": "qualifier_prospect",
@@ -69,13 +73,20 @@ TOOL_QUALIFICATION = {
 }
 
 
-def build_prompt(prospect: dict, icp: dict) -> str:
+def build_system(icp: dict) -> list[dict]:
+    """Partie du prompt IDENTIQUE pour tous les prospects d'un même profil
+    (produit, ICP, exclusions, seuil) — posée en 'system' avec un point de
+    cache. Sur un lot de N qualifications, seul le 1er appel paie le plein
+    tarif pour ce bloc ; les N-1 suivants le lisent en cache à ~10% du prix
+    (tant qu'ils s'enchaînent dans les 5 minutes). Sous le seuil minimum de
+    mise en cache d'Anthropic (1024 tokens pour Sonnet), le cache est
+    simplement ignoré sans erreur — aucun risque à le marquer toujours."""
     produit = icp.get("produit", {})
     cible = icp.get("cible", {})
-    return f"""Tu es un agent de qualification de prospects B2B. Compare le
-prospect ci-dessous à l'ICP (Ideal Customer Profile) et appelle l'outil
-`qualifier_prospect` avec ta décision. Ne réponds jamais en texte libre,
-utilise uniquement l'outil.
+    texte = f"""Tu es un agent de qualification de prospects B2B. Compare le
+prospect fourni à l'ICP (Ideal Customer Profile) ci-dessous et appelle
+l'outil `qualifier_prospect` avec ta décision. Ne réponds jamais en texte
+libre, utilise uniquement l'outil.
 
 # Produit / service vendu
 Nom : {produit.get('nom', 'N/A')}
@@ -92,30 +103,45 @@ Signaux d'achat recherchés : {', '.join(cible.get('signaux_achat', [])) or 'non
 # Exclusions
 {chr(10).join('- ' + e for e in icp.get('exclusions', [])) or 'aucune'}
 
-# Prospect à qualifier
+Seuil de qualification configuré : {icp.get('seuil_qualification', 60)}/100.
+Sois honnête sur le score : un profil moyen doit avoir un score moyen, ne
+gonfle pas artificiellement les scores."""
+    return [{"type": "text", "text": texte, "cache_control": {"type": "ephemeral"}}]
+
+
+def build_prompt(prospect: dict) -> str:
+    """Partie du prompt PROPRE à ce prospect — jamais mise en cache, change
+    à chaque appel."""
+    return f"""# Prospect à qualifier
 Prénom : {prospect.get('prenom', '')}
 Nom : {prospect.get('nom', '')}
 Poste : {prospect.get('poste', '')}
 Entreprise : {prospect.get('entreprise', '')}
 Secteur : {prospect.get('secteur', '')}
 Taille d'entreprise : {prospect.get('taille_entreprise', '')}
-Notes additionnelles : {prospect.get('notes', '')}
-
-Seuil de qualification configuré : {icp.get('seuil_qualification', 60)}/100.
-Sois honnête sur le score : un profil moyen doit avoir un score moyen, ne
-gonfle pas artificiellement les scores."""
+Notes additionnelles : {prospect.get('notes', '')}"""
 
 
 def _usage_de(response) -> dict:
     """Extrait tokens_entree/tokens_sortie/recherches_web d'une réponse API,
-    quel que soit l'agent qui a fait l'appel — même format partout."""
+    quel que soit l'agent qui a fait l'appel — même format partout.
+    tokens_entree inclut les tokens lus depuis le cache (cache_read) et ceux
+    qui viennent d'y être écrits (cache_creation) : ce sont de vrais tokens
+    traités, juste facturés très différemment (~10% du prix en lecture,
+    ~125% en écriture) — les compter donne un total exact, pas un total qui
+    semblerait chuter artificiellement dès que le cache s'active."""
     usage = getattr(response, "usage", None)
     if not usage:
         return {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
     server_tool_use = getattr(usage, "server_tool_use", None)
     recherches = getattr(server_tool_use, "web_search_requests", 0) if server_tool_use else 0
+    tokens_entree = (
+        (getattr(usage, "input_tokens", 0) or 0)
+        + (getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        + (getattr(usage, "cache_read_input_tokens", 0) or 0)
+    )
     return {
-        "tokens_entree": getattr(usage, "input_tokens", 0) or 0,
+        "tokens_entree": tokens_entree,
         "tokens_sortie": getattr(usage, "output_tokens", 0) or 0,
         "recherches_web": recherches or 0,
     }
@@ -133,7 +159,8 @@ def qualify_prospect(prospect: dict, icp: dict, client=None) -> tuple[dict, dict
         max_tokens=1024,
         tools=[TOOL_QUALIFICATION],
         tool_choice={"type": "tool", "name": "qualifier_prospect"},
-        messages=[{"role": "user", "content": build_prompt(prospect, icp)}],
+        system=build_system(icp),
+        messages=[{"role": "user", "content": build_prompt(prospect)}],
     )
     usage = _usage_de(response)
 

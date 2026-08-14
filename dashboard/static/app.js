@@ -152,6 +152,42 @@ async function passerBrouillon(prospectId) {
   }
 }
 
+function pastilleProgrammee(prospectId, dateAffichee) {
+  return (
+    '<span class="pastille pastille-attente">Programmé : ' + dateAffichee + '</span>' +
+    '<button onclick="annulerProgrammation(' + prospectId + ', this)">Annuler</button>'
+  );
+}
+
+function champProgrammation(prospectId) {
+  return (
+    '<input type="datetime-local" class="champ-date-programmation">' +
+    '<button onclick="programmerEnvoi(' + prospectId + ', this)">Programmer</button>'
+  );
+}
+
+async function programmerEnvoi(prospectId, bouton) {
+  const zone = document.getElementById("programmation-" + prospectId);
+  const champ = zone.querySelector(".champ-date-programmation");
+  if (!champ || !champ.value) { toast("Choisis une date et une heure.", "erreur"); return; }
+  bouton.disabled = true;
+  const donnees = await action("/api/prospects/" + prospectId + "/programmer", { date_envoi: champ.value });
+  bouton.disabled = false;
+  if (donnees && donnees.ok) {
+    zone.innerHTML = pastilleProgrammee(prospectId, champ.value.replace("T", " "));
+  }
+}
+
+async function annulerProgrammation(prospectId, bouton) {
+  bouton.disabled = true;
+  const donnees = await action("/api/prospects/" + prospectId + "/programmer", { date_envoi: "" });
+  bouton.disabled = false;
+  if (donnees && donnees.ok) {
+    const zone = document.getElementById("programmation-" + prospectId);
+    zone.innerHTML = champProgrammation(prospectId);
+  }
+}
+
 function majQuota(restant) {
   document.querySelectorAll(".js-quota-restant").forEach((el) => {
     el.textContent = restant;
