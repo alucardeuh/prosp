@@ -194,7 +194,7 @@
         <thead>
             <tr>
                 <th><input type="checkbox" id="tout-cocher" onchange="toutCocher(this)"></th>
-                <th>Nom</th><th>Poste</th><th>Entreprise</th><th>Statut</th><th>Envois</th>
+                <th>Nom</th><th>Poste</th><th>Entreprise</th><th>Secteur</th><th>Statut</th><th>Envois</th>
             </tr>
         </thead>
         <tbody>
@@ -204,6 +204,7 @@
             <td><a href="/prospect/{{ p.id }}">{{ p.prenom }} {{ p.nom }}</a></td>
             <td>{{ p.poste or '—' }}</td>
             <td>{{ p.entreprise or '—' }}</td>
+            <td class="silencieux">{{ p.secteur or '—' }}</td>
             <td>{{ p.statut }}</td>
             <td class="mono">{{ p.nb_envois }}</td>
         </tr>
@@ -214,6 +215,9 @@
     <div class="rangee-boutons" style="margin-top:14px">
         <button class="primaire" id="bouton-generer-selection" onclick="genererSelection('initial', this)" disabled>
             Générer pour la sélection (<span id="compteur-selection">0</span>)
+        </button>
+        <button class="danger" id="bouton-supprimer-selection" onclick="supprimerSelection(this)" disabled>
+            Supprimer la sélection (<span id="compteur-selection-suppr">0</span>)
         </button>
     </div>
 </div>

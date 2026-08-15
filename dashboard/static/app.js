@@ -305,6 +305,20 @@ function majCompteurSelection() {
   const cochees = document.querySelectorAll("#table-selection .case-selection:checked").length;
   document.getElementById("compteur-selection").textContent = cochees;
   document.getElementById("bouton-generer-selection").disabled = cochees === 0;
+  const compteurSuppr = document.getElementById("compteur-selection-suppr");
+  const boutonSuppr = document.getElementById("bouton-supprimer-selection");
+  if (compteurSuppr) compteurSuppr.textContent = cochees;
+  if (boutonSuppr) boutonSuppr.disabled = cochees === 0;
+}
+
+async function supprimerSelection(bouton) {
+  const ids = Array.from(document.querySelectorAll("#table-selection .case-selection:checked"))
+    .map((c) => parseInt(c.value, 10));
+  if (!ids.length) return;
+  if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
+  bouton.disabled = true;
+  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
+  if (!donnees) bouton.disabled = false;
 }
 
 function filtrerSelection() {

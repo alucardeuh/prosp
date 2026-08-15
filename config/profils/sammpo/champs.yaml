@@ -1,1 +1,13 @@
-champs: []
+champs:
+- nom: proprietaire_du_contact
+  libelle: Propriétaire du contact
+- nom: statut_du_lead
+  libelle: Statut du lead
+- nom: date_de_creation
+  libelle: Date de création
+- nom: hubspot_id
+  libelle: HubSpot ID
+- nom: entreprises_associees
+  libelle: Entreprises associées (HubSpot)
+- nom: date_de_la_derniere_activite
+  libelle: Date de la dernière activité

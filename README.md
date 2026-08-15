@@ -47,7 +47,12 @@ ouvrent directement le navigateur sur l'interface.
 
   Plus bas, une **sélection sur mesure** (cases à cocher, filtrable par
   poste / statut / nombre d'envois déjà réalisés — peu importe le statut de
-  qualification).
+  qualification, mais toujours avec un email, sinon le prospect n'a rien à
+  faire dans une table servant à choisir qui recevra un email — il reste
+  visible partout ailleurs). Depuis cette même sélection : **supprimer**
+  définitivement les prospects choisis. Pour supprimer TOUS les prospects
+  d'un profil d'un coup, direction Paramètres → Zone dangereuse
+  (confirmation par saisie du nom du profil, irréversible).
 
   Pour écrire un email à un prospect précis (à la main ou par l'IA) : passe
   par sa **fiche** (`/prospect/N`) plutôt que par cette page — le choix

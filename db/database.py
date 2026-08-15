@@ -203,11 +203,38 @@ def delete_prospect(prospect_id: int, db_path: Path = DB_PATH) -> None:
         conn.execute("DELETE FROM prospects WHERE id = ?", (prospect_id,))
 
 
+def delete_prospects(ids: list[int], profil: str, db_path: Path = DB_PATH) -> int:
+    """Supprime plusieurs prospects d'un coup, scopé au profil (un id d'un
+    autre profil dans la liste est ignoré plutôt que de risquer une
+    suppression croisée). Retourne le nombre réellement supprimé."""
+    if not ids:
+        return 0
+    with get_connection(db_path) as conn:
+        marqueurs = ",".join("?" * len(ids))
+        curseur = conn.execute(
+            f"DELETE FROM prospects WHERE profil = ? AND id IN ({marqueurs})",
+            [profil] + list(ids),
+        )
+        return curseur.rowcount
+
+
+def delete_tous_prospects(profil: str, db_path: Path = DB_PATH) -> int:
+    """Supprime TOUS les prospects d'un profil — irréversible. Retourne le
+    nombre supprimé."""
+    with get_connection(db_path) as conn:
+        curseur = conn.execute("DELETE FROM prospects WHERE profil = ?", (profil,))
+        return curseur.rowcount
+
+
 def list_prospects_pour_selection(profil: str, db_path: Path = DB_PATH) -> list[dict]:
-    """Tous les prospects du profil, désinscrits exclus (jamais sélectionnables
-    pour un envoi, quoi qu'il arrive), avec leur nombre d'envois déjà réalisés
-    (email_envoye + relance_envoyee confondus) — sert à la table de sélection
-    sur mesure de /envoi, indépendamment du statut de qualification."""
+    """Tous les prospects du profil AVEC UN EMAIL, désinscrits exclus (jamais
+    sélectionnables pour un envoi, quoi qu'il arrive), avec leur nombre
+    d'envois déjà réalisés (email_envoye + relance_envoyee confondus) —
+    sert à la table de sélection sur mesure de /envoi, indépendamment du
+    statut de qualification. Sans email, un prospect n'est techniquement
+    pas contactable par cette voie : il n'a rien à faire dans une table
+    dont le seul but est de choisir qui recevra un email (il reste bien
+    sûr visible partout ailleurs — Pipeline, sa fiche — juste pas ici)."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             """SELECT p.*, COALESCE(e.nb_envois, 0) AS nb_envois
@@ -218,6 +245,7 @@ def list_prospects_pour_selection(profil: str, db_path: Path = DB_PATH) -> list[
                    GROUP BY prospect_id
                ) e ON e.prospect_id = p.id
                WHERE p.profil = ? AND p.statut != 'desinscrit'
+                 AND p.email IS NOT NULL AND p.email != ''
                ORDER BY p.date_creation DESC""",
             (profil,),
         ).fetchall()

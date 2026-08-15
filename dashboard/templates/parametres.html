@@ -280,4 +280,21 @@
         </div>
     </div>
 </div>
+
+<div class="carte" style="border-color:var(--brick); margin-top:20px">
+    <h2 style="color:var(--brick)">Zone dangereuse — profil « {{ profil_connexions }} »</h2>
+    <p class="aide">
+        Supprime définitivement TOUS les prospects de ce profil — fiches,
+        historique, brouillons, tout. Les autres profils ne sont pas
+        touchés. Aucun moyen de revenir en arrière après ça.
+    </p>
+    <form method="post" action="/parametres/supprimer-tous-prospects" style="margin-top:10px"
+          onsubmit="return confirm('Dernière confirmation : supprimer définitivement TOUS les prospects de ce profil ?')">
+        <label for="confirmation_suppression">Tape exactement <span class="mono">{{ profil_connexions }}</span> pour confirmer</label>
+        <input type="text" id="confirmation_suppression" name="confirmation" placeholder="{{ profil_connexions }}" autocomplete="off">
+        <div class="rangee-boutons" style="margin-top:10px">
+            <button type="submit" class="danger">Supprimer tous les prospects de ce profil</button>
+        </div>
+    </form>
+</div>
 {% endblock %}

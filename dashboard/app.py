@@ -397,6 +397,33 @@ def api_qualifier():
     return jsonify({"job_id": job_id})
 
 
+@app.route("/api/prospects/supprimer-selection", methods=["POST"])
+def api_supprimer_selection():
+    profil = db.profil_actif()
+    donnees = request.get_json(silent=True) or {}
+    ids = donnees.get("ids") or []
+    try:
+        ids = [int(i) for i in ids]
+    except (TypeError, ValueError):
+        return jsonify({"erreur": "Sélection invalide."}), 400
+    n = db.delete_prospects(ids, profil)
+    if n == 0:
+        return jsonify({"erreur": "Rien à supprimer dans cette sélection."}), 400
+    return jsonify({"ok": True, "message": f"{n} prospect(s) supprimé(s) définitivement."})
+
+
+@app.route("/parametres/supprimer-tous-prospects", methods=["POST"])
+def parametres_supprimer_tous_prospects():
+    profil = db.profil_actif()
+    confirmation = request.form.get("confirmation", "").strip()
+    if confirmation != profil:
+        flash(f"Suppression annulée — il fallait taper « {profil} » exactement pour confirmer.", "erreur")
+        return redirect(url_for("parametres"))
+    n = db.delete_tous_prospects(profil)
+    flash(f"{n} prospect(s) du profil « {profil} » supprimé(s) définitivement.", "succes")
+    return redirect(url_for("parametres"))
+
+
 @app.route("/api/jobs/generer-brouillons", methods=["POST"])
 def api_generer_brouillons():
     """Génère en masse les brouillons manquants (initiaux ou relances),
