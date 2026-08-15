@@ -256,6 +256,23 @@
                     depuis la page <a href="/envoi">Envoi</a>.
                 </p>
 
+                <label for="niveau_reflexion">Réflexion (thinking) pour la rédaction</label>
+                <select id="niveau_reflexion" name="niveau_reflexion">
+                    <option value="desactive" {% if reglages.niveau_reflexion == 'desactive' %}selected{% endif %}>Désactivée (par défaut)</option>
+                    <option value="faible" {% if reglages.niveau_reflexion == 'faible' %}selected{% endif %}>Faible</option>
+                    <option value="normal" {% if reglages.niveau_reflexion == 'normal' %}selected{% endif %}>Normale</option>
+                    <option value="approfondi" {% if reglages.niveau_reflexion == 'approfondi' %}selected{% endif %}>Approfondie</option>
+                </select>
+                <p class="aide">
+                    Depuis Sonnet 5, l'API réfléchit avant de répondre par défaut dès
+                    qu'on ne précise rien — un coût invisible (facturé comme tokens de
+                    sortie, jamais affiché) pour une tâche de rédaction qui n'en a pas
+                    forcément besoin. Désactivée par défaut ici pour cette raison. Teste
+                    "Faible" ou "Normale" sur quelques brouillons si tu veux comparer la
+                    qualité — uniquement pour la rédaction (Sonnet), sans effet sur la
+                    qualification (Haiku, qui ne supporte pas ce réglage).
+                </p>
+
                 <div class="rangee-boutons" style="margin-top:16px">
                     <button type="submit" class="primaire">Enregistrer les réglages</button>
                 </div>

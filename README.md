@@ -169,6 +169,13 @@ volontaire.
   recherche facture $10/1000 + le coût en tokens du contenu rapporté —
   c'est un poste de coût important, donc réglable plutôt qu'imposé. Les
   relances n'en font jamais.
+- **Réflexion (thinking) désactivée par défaut sur la rédaction** —
+  Paramètres → Réglages génération. Depuis Sonnet 5, l'API réfléchit avant
+  de répondre par défaut dès qu'aucun paramètre `thinking` n'est précisé
+  (contrairement à Sonnet 4.6, où l'absence de ce paramètre voulait dire
+  "pas de thinking") — un coût invisible sinon, facturé comme tokens de
+  sortie sans jamais s'afficher nulle part. Réglable si tu veux comparer la
+  qualité avec le thinking activé sur quelques brouillons.
 - **Cache de prompt Anthropic** activé sur la qualification et la
   rédaction : la partie identique à travers tous les prospects d'un même
   lot (ICP, produit, règles d'écriture, ton) est mise en cache côté

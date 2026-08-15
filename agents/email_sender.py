@@ -38,17 +38,14 @@ from integrations import gmail_client  # noqa: E402
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
 # Modèle de rédaction : contrairement à la qualification et au classement
 # des réponses, ici la qualité du texte compte vraiment — c'est ce qui part
-# chez un vrai prospect. claude-sonnet-5 (dernière génération Sonnet) est à
-# la fois plus récent ET moins cher que l'ancien défaut claude-sonnet-4-6 —
-# pas de compromis qualité/coût ici, juste une mise à jour. Surchargeable
-# via .env (CLAUDE_MODEL=...).
-# Modèle de rédaction : contrairement à la qualification et au classement
-# des réponses, ici la qualité du texte compte vraiment — c'est ce qui part
-# chez un vrai prospect. claude-sonnet-5 (dernière génération Sonnet) est à
-# la fois plus récent ET moins cher que l'ancien défaut claude-sonnet-4-6 —
-# pas de compromis qualité/coût ici, juste une mise à jour. Lu à CHAQUE
-# appel pour qu'un changement fait depuis Paramètres prenne effet tout de
-# suite, sans redémarrer l'app. Surchargeable via .env (CLAUDE_MODEL=...).
+# chez un vrai prospect. claude-sonnet-5 (dernière génération Sonnet) coûte
+# ~33% de moins par token que l'ancien défaut claude-sonnet-4-6 ($2/$10 vs
+# $3/$15 par million) — mais son nouveau tokenizer compte jusqu'à ~35% de
+# tokens en plus pour un même texte, donc l'économie réelle est plus proche
+# de 0-25% que d'un tiers net. Toujours dans le bon sens, juste moins
+# tranché qu'un simple comparatif de prix par token ne le suggère. Lu à
+# CHAQUE appel pour qu'un changement fait depuis Paramètres prenne effet
+# tout de suite, sans redémarrer l'app. Surchargeable via .env (CLAUDE_MODEL=...).
 def _modele() -> str:
     return os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
 
@@ -308,6 +305,28 @@ Relances déjà envoyées : {prospect.get('nb_relances', 0)}
 {premier_email or '(contenu du premier email non disponible — reste générique sur la référence au message précédent)'}"""
 
 
+NIVEAUX_REFLEXION = {"desactive": None, "faible": "low", "normal": "medium", "approfondi": "high"}
+
+
+def _niveau_reflexion() -> str | None:
+    """Niveau de thinking adaptatif pour la rédaction (Sonnet uniquement —
+    Haiku, utilisé pour la qualification et le classement, ne le supporte
+    pas). None = thinking explicitement désactivé.
+
+    Par défaut désactivé, volontairement : depuis Sonnet 5, l'API active le
+    thinking adaptatif PAR DÉFAUT dès qu'aucun paramètre `thinking` n'est
+    précisé — un changement de comportement par rapport à Sonnet 4.6, où
+    l'absence de ce paramètre voulait dire "pas de thinking". Sans ce
+    garde-fou explicite, chaque email payait donc un coût de réflexion
+    invisible (facturé comme tokens de sortie, jamais affiché nulle part
+    puisque Sonnet 5 masque aussi l'affichage du thinking par défaut) — pour
+    une tâche de rédaction courte qui n'a pas besoin de raisonnement étendu.
+    Réglable depuis Paramètres si tu veux comparer la qualité avec le
+    thinking activé sur quelques brouillons."""
+    nom = db.get_reglage("niveau_reflexion") or "desactive"
+    return NIVEAUX_REFLEXION.get(nom)
+
+
 def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherches: int = 0) -> tuple[dict, dict]:
     if client is None:
         import anthropic
@@ -318,13 +337,24 @@ def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherc
     if max_recherches > 0:
         tools = [_outil_recherche_web(max_recherches), TOOL_REDACTION]
 
-    response = client.messages.create(
-        model=_modele(),
-        max_tokens=4096,
-        tools=tools,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    parametres = {
+        "model": _modele(),
+        # 8192 plutôt que 4096 : le thinking (si activé via Paramètres)
+        # partage ce même budget avec la réponse — trop serré, une réponse
+        # peut être coupée avant même d'atteindre l'appel d'outil final.
+        "max_tokens": 8192,
+        "tools": tools,
+        "system": system,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+    effort = _niveau_reflexion()
+    if effort is None:
+        parametres["thinking"] = {"type": "disabled"}
+    else:
+        parametres["thinking"] = {"type": "adaptive"}
+        parametres["output_config"] = {"effort": effort}
+
+    response = client.messages.create(**parametres)
     usage = qualification._usage_de(response)
     for block in response.content:
         if block.type == "tool_use" and block.name == "rediger_email":
