@@ -113,6 +113,12 @@ CREATE TABLE IF NOT EXISTS brouillons (
     -- reste envoyable manuellement avant l'échéance si besoin.
     date_envoi_prevue TEXT,
 
+    -- Mis de côté (bouton "Mettre de côté", ex-"Passer") : le brouillon
+    -- n'est PAS supprimé, juste rangé dans un onglet séparé pour ne pas
+    -- encombrer la liste active — récupérable ou supprimable pour de bon
+    -- depuis cet onglet.
+    mis_de_cote       INTEGER NOT NULL DEFAULT 0,
+
     date_generation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

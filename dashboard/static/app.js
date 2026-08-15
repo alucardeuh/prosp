@@ -169,11 +169,20 @@ async function sauverBrouillon(prospectId, bouton) {
 }
 
 async function passerBrouillon(prospectId) {
-  const donnees = await action("/api/prospects/" + prospectId + "/passer");
-  if (donnees && donnees.ok) {
-    const carte = document.getElementById("carte-" + prospectId);
-    if (carte) carte.remove();
-  }
+  await action("/api/prospects/" + prospectId + "/passer", null, { recharger: true, delai: 400 });
+}
+
+async function reprendreBrouillon(prospectId, bouton) {
+  bouton.disabled = true;
+  const donnees = await action("/api/prospects/" + prospectId + "/reprendre", null, { recharger: true, delai: 400 });
+  if (!donnees) bouton.disabled = false;
+}
+
+async function supprimerBrouillonDefinitif(prospectId, bouton) {
+  if (!confirm("Supprimer ce brouillon pour de bon ? Impossible de revenir en arrière.")) return;
+  bouton.disabled = true;
+  const donnees = await action("/api/prospects/" + prospectId + "/supprimer-brouillon", null, { recharger: true, delai: 400 });
+  if (!donnees) bouton.disabled = false;
 }
 
 function pastilleProgrammee(prospectId, dateAffichee) {
@@ -244,14 +253,21 @@ async function regenererUn(prospectId, type, bouton) {
 // ---------------------------------------------------------------- onglets (page /envoi)
 
 function basculerOngletEnvoi(nom) {
-  const avec = document.getElementById("onglet-avec");
-  const sans = document.getElementById("onglet-sans");
-  const btnAvec = document.getElementById("onglet-avec-btn");
-  const btnSans = document.getElementById("onglet-sans-btn");
-  if (avec) avec.style.display = nom === "avec" ? "block" : "none";
-  if (sans) sans.style.display = nom === "sans" ? "block" : "none";
-  if (btnAvec) btnAvec.classList.toggle("actif", nom === "avec");
-  if (btnSans) btnSans.classList.toggle("actif", nom === "sans");
+  const noms = ["brouillons", "generer", "cote"];
+  noms.forEach((n) => {
+    const zone = document.getElementById("onglet-" + n);
+    const bouton = document.getElementById("onglet-" + n + "-btn");
+    if (zone) zone.style.display = n === nom ? "block" : "none";
+    if (bouton) bouton.classList.toggle("actif", n === nom);
+  });
+}
+
+function basculerBrouillon(prospectId) {
+  const detail = document.getElementById("detail-" + prospectId);
+  if (!detail) return;
+  const ouvert = detail.classList.toggle("ouvert");
+  const ligne = detail.closest(".ligne-brouillon");
+  if (ligne) ligne.classList.toggle("ouvert", ouvert);
 }
 
 // ---------------------------------------------------------------- sélection sur mesure (page /envoi)

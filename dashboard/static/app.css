@@ -186,6 +186,27 @@ h2 { font-family: var(--display); font-size: 15px; font-weight: 600; margin: 30p
 .onglet-btn:hover { color: var(--ink); }
 .onglet-btn.actif { color: var(--pine); border-bottom-color: var(--pine); }
 
+.liste-brouillons { display: flex; flex-direction: column; gap: 8px; }
+.ligne-brouillon {
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--r);
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.entete-brouillon {
+  width: 100%; display: flex; justify-content: space-between; align-items: center;
+  gap: 12px; padding: 13px 18px; background: none; border: none; border-radius: 0;
+  cursor: pointer; text-align: left; font-family: var(--body); font-size: 14px;
+}
+.entete-brouillon:hover { background: var(--paper); }
+.qui-compact { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.qui-compact .aide { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fil-droite { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.chevron { color: var(--faint); font-size: 11px; transition: transform 0.15s; }
+.ligne-brouillon.ouvert .chevron { transform: rotate(180deg); }
+.detail-brouillon { display: none; border-top: 1px solid var(--line); }
+.detail-brouillon.ouvert { display: block; }
+#onglet-cote .detail-brouillon.ouvert { padding: 16px 18px; }
+#onglet-cote .detail-brouillon .rangee-boutons { margin-top: 12px; }
+
 /* ---------------- pipeline segmenté (signature du dashboard) ---------------- */
 .pipeline { margin: 18px 0 26px; }
 .pipeline-barre {

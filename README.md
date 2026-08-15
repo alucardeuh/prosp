@@ -26,12 +26,17 @@ sur le réseau.
   « Vérifier les réponses » : tout tourne en arrière-plan avec une barre de
   progression et un bouton **Annuler**, la page ne gèle plus jamais.
 - **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
-  libre) en haut, puis deux onglets cliquables : **Brouillons** (tout ce qui
-  est prêt à relire/envoyer/programmer, peu importe comment ça a été créé)
-  et **Sans brouillon** (les qualifiés à générer, un par un ou tous d'un
-  coup). Plus bas, une **sélection sur mesure** (cases à cocher, filtrable
-  par poste / statut / nombre d'envois déjà réalisés — peu importe le
-  statut de qualification).
+  libre) en haut, puis trois onglets cliquables :
+  - **Brouillons** — prêts à relire/envoyer/programmer, en liste compacte
+    (clic sur un nom pour déplier son email complet) ;
+  - **À générer** — les qualifiés sans brouillon, un par un ou tous d'un coup ;
+  - **Mis de côté** — les brouillons passés pour plus tard (bouton « Mettre
+    de côté », ex-« Passer ») : jamais supprimés, juste rangés — reprends-les
+    ou supprime-les pour de bon depuis cet onglet.
+
+  Plus bas, une **sélection sur mesure** (cases à cocher, filtrable par
+  poste / statut / nombre d'envois déjà réalisés — peu importe le statut de
+  qualification).
 
   Pour écrire un email à un prospect précis (à la main ou par l'IA) : passe
   par sa **fiche** (`/prospect/N`) plutôt que par cette page — le choix

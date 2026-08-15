@@ -244,17 +244,20 @@ def envoi():
     brouillons = db.list_brouillons()
 
     # Brouillons déjà créés : n'importe quel statut de qualification (écrire
-    # à la main, via le composeur, n'exige pas d'être "qualifie" — seule la
-    # génération IA en masse ci-dessous reste liée aux qualifiés). Scopé au
-    # profil actif : list_brouillons() n'est pas filtrée par profil elle-même.
-    avec = []
+    # à la main n'exige pas d'être "qualifie" — seule la génération IA en
+    # masse ci-dessous reste liée aux qualifiés). Scopé au profil actif :
+    # list_brouillons() n'est pas filtrée par profil elle-même. Séparés en
+    # deux : actifs (à traiter maintenant) et mis de côté ("Passer" ne
+    # supprime plus rien, juste range ailleurs pour ne pas perdre le texte).
+    actifs, de_cote = [], []
     for prospect_id, brouillon in brouillons.items():
         p = db.get_prospect(prospect_id)
         if p and p.get("profil") == profil and p.get("email"):
             p["brouillon"] = brouillon
-            avec.append(p)
-    avec.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
-    ids_avec_brouillon = {p["id"] for p in avec}
+            (de_cote if brouillon.get("mis_de_cote") else actifs).append(p)
+    actifs.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+    de_cote.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+    ids_avec_brouillon = {p["id"] for p in actifs + de_cote}
 
     sans = [p for p in db.list_prospects(statut="qualifie", profil=profil, tri="score_qualification", ordre="desc")
             if p.get("email") and p["id"] not in ids_avec_brouillon]
@@ -262,7 +265,7 @@ def envoi():
     selection = db.list_prospects_pour_selection(profil)
     postes = sorted({p["poste"] for p in selection if p.get("poste")})
 
-    return render_template("envoi.html", avec_brouillon=avec, sans_brouillon=sans,
+    return render_template("envoi.html", avec_brouillon=actifs, mis_de_cote=de_cote, sans_brouillon=sans,
                            quota_restant=_quota_restant(), actif="envoi",
                            selection=selection, postes=postes, statuts=STATUTS,
                            niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
@@ -619,8 +622,20 @@ def api_programmer(prospect_id: int):
 
 @app.route("/api/prospects/<int:prospect_id>/passer", methods=["POST"])
 def api_passer(prospect_id: int):
+    db.mettre_brouillon_de_cote(prospect_id)
+    return jsonify({"ok": True, "message": "Mis de côté — retrouvable dans l'onglet « Mis de côté »."})
+
+
+@app.route("/api/prospects/<int:prospect_id>/reprendre", methods=["POST"])
+def api_reprendre(prospect_id: int):
+    db.reprendre_brouillon(prospect_id)
+    return jsonify({"ok": True, "message": "Brouillon repris — de retour dans les brouillons actifs."})
+
+
+@app.route("/api/prospects/<int:prospect_id>/supprimer-brouillon", methods=["POST"])
+def api_supprimer_brouillon(prospect_id: int):
     db.delete_brouillon(prospect_id)
-    return jsonify({"ok": True, "message": "Brouillon écarté — le prospect reste dans la file."})
+    return jsonify({"ok": True, "message": "Brouillon supprimé définitivement."})
 
 
 @app.route("/api/prospects/<int:prospect_id>/statut", methods=["POST"])

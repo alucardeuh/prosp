@@ -76,6 +76,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
                     conn.execute(f"ALTER TABLE brouillons ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
             if "date_envoi_prevue" not in cols_br:
                 conn.execute("ALTER TABLE brouillons ADD COLUMN date_envoi_prevue TEXT")
+            if "mis_de_cote" not in cols_br:
+                conn.execute("ALTER TABLE brouillons ADD COLUMN mis_de_cote INTEGER NOT NULL DEFAULT 0")
         conn.executescript(SCHEMA_PATH.read_text())
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
@@ -434,6 +436,19 @@ def get_brouillon(prospect_id: int, db_path: Path = DB_PATH) -> dict | None:
 def delete_brouillon(prospect_id: int, db_path: Path = DB_PATH) -> None:
     with get_connection(db_path) as conn:
         conn.execute("DELETE FROM brouillons WHERE prospect_id = ?", (prospect_id,))
+
+
+def mettre_brouillon_de_cote(prospect_id: int, db_path: Path = DB_PATH) -> None:
+    """'Passer' un brouillon ne le supprime plus — il est juste rangé dans
+    un onglet séparé, pour ne jamais perdre un texte déjà écrit (à la main
+    ou par l'IA, donc parfois des tokens déjà dépensés)."""
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE brouillons SET mis_de_cote = 1 WHERE prospect_id = ?", (prospect_id,))
+
+
+def reprendre_brouillon(prospect_id: int, db_path: Path = DB_PATH) -> None:
+    with get_connection(db_path) as conn:
+        conn.execute("UPDATE brouillons SET mis_de_cote = 0 WHERE prospect_id = ?", (prospect_id,))
 
 
 def list_brouillons(db_path: Path = DB_PATH) -> dict:

@@ -38,62 +38,82 @@
     {% endif %}
 </div>
 
-{% if not avec_brouillon and not sans_brouillon %}
+{% if not avec_brouillon and not sans_brouillon and not mis_de_cote %}
 <div class="vide">
     Aucun prospect qualifié avec email en attente d'envoi.<br>
     <a href="/">Qualifie des prospects</a> d'abord, ou compose une sélection sur mesure plus bas.
 </div>
 {% endif %}
 
-{% if avec_brouillon or sans_brouillon %}
+{% if avec_brouillon or sans_brouillon or mis_de_cote %}
 <div class="onglets-envoi">
-    <button type="button" class="onglet-btn {{ 'actif' if avec_brouillon else '' }}" id="onglet-avec-btn" onclick="basculerOngletEnvoi('avec')">
+    <button type="button" class="onglet-btn {{ 'actif' if avec_brouillon else '' }}" id="onglet-brouillons-btn" onclick="basculerOngletEnvoi('brouillons')">
         Brouillons ({{ avec_brouillon|length }})
     </button>
-    <button type="button" class="onglet-btn {{ 'actif' if not avec_brouillon else '' }}" id="onglet-sans-btn" onclick="basculerOngletEnvoi('sans')">
-        Sans brouillon ({{ sans_brouillon|length }})
+    <button type="button" class="onglet-btn {{ 'actif' if not avec_brouillon and sans_brouillon else '' }}" id="onglet-generer-btn" onclick="basculerOngletEnvoi('generer')">
+        À générer ({{ sans_brouillon|length }})
+    </button>
+    <button type="button" class="onglet-btn {{ 'actif' if not avec_brouillon and not sans_brouillon and mis_de_cote else '' }}" id="onglet-cote-btn" onclick="basculerOngletEnvoi('cote')">
+        Mis de côté ({{ mis_de_cote|length }})
     </button>
 </div>
 
-<div id="onglet-avec" style="display: {{ 'block' if avec_brouillon else 'none' }}">
-    {% for p in avec_brouillon %}
-    <div class="carte carte-email" id="carte-{{ p.id }}">
-        <div class="tete">
-            <div class="qui">
-                {{ p.prenom }} {{ p.nom }}
-                <small>{{ p.poste or '—' }} · {{ p.entreprise or '—' }} · {{ p.email }}
-                    {% if p.score_qualification is not none %} · score {{ p.score_qualification }}{% endif %}
-                    {% if p.brouillon.tokens_entree %} · <span class="mono">{{ p.brouillon.tokens_entree + p.brouillon.tokens_sortie }} tokens{% if p.brouillon.recherches_web %}, {{ p.brouillon.recherches_web }} recherche(s){% endif %}</span>{% else %} · <span class="pastille pastille-off">écrit à la main</span>{% endif %}</small>
+<div id="onglet-brouillons" style="display: {{ 'block' if avec_brouillon else 'none' }}">
+    {% if avec_brouillon %}
+    <div class="liste-brouillons">
+        {% for p in avec_brouillon %}
+        <div class="ligne-brouillon">
+            <button type="button" class="entete-brouillon" onclick="basculerBrouillon({{ p.id }})">
+                <span class="qui-compact">
+                    <strong>{{ p.prenom }} {{ p.nom }}</strong>
+                    <span class="aide">{{ p.entreprise or '—' }} · {{ p.brouillon.objet or '(sans objet)' }}</span>
+                </span>
+                <span class="fil-droite">
+                    {% if p.brouillon.date_envoi_prevue %}<span class="pastille pastille-attente">programmé</span>{% endif %}
+                    {% if not p.brouillon.tokens_entree %}<span class="pastille pastille-off">écrit à la main</span>{% endif %}
+                    <span class="chevron">▾</span>
+                </span>
+            </button>
+            <div class="detail-brouillon" id="detail-{{ p.id }}">
+                <div class="carte-email" id="carte-{{ p.id }}" style="border:none; box-shadow:none">
+                    <div class="tete">
+                        <div class="qui">
+                            <small>{{ p.poste or '—' }} · {{ p.email }}
+                                {% if p.score_qualification is not none %} · score {{ p.score_qualification }}{% endif %}
+                                {% if p.brouillon.tokens_entree %} · <span class="mono">{{ p.brouillon.tokens_entree + p.brouillon.tokens_sortie }} tokens{% if p.brouillon.recherches_web %}, {{ p.brouillon.recherches_web }} recherche(s){% endif %}</span>{% endif %}</small>
+                        </div>
+                        <a href="/prospect/{{ p.id }}">fiche</a>
+                    </div>
+                    <div class="corps-zone">
+                        <input class="objet" value="{{ p.brouillon.objet }}" placeholder="Objet">
+                        <textarea class="corps">{{ p.brouillon.corps }}</textarea>
+                    </div>
+                    <div class="pied">
+                        <div class="actions-envoi">
+                            <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
+                            <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
+                            <button onclick="regenererUn({{ p.id }}, 'initial', this)">Regénérer</button>
+                            <button class="danger" onclick="passerBrouillon({{ p.id }})">Mettre de côté</button>
+                        </div>
+                        <div class="programmation" id="programmation-{{ p.id }}">
+                            {% if p.brouillon.date_envoi_prevue %}
+                            <span class="pastille pastille-attente">Programmé : {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }}</span>
+                            <button onclick="annulerProgrammation({{ p.id }}, this)">Annuler</button>
+                            {% else %}
+                            <input type="datetime-local" class="champ-date-programmation">
+                            <button onclick="programmerEnvoi({{ p.id }}, this)">Programmer</button>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
             </div>
-            <a href="/prospect/{{ p.id }}">fiche</a>
         </div>
-        <div class="corps-zone">
-            <input class="objet" value="{{ p.brouillon.objet }}" placeholder="Objet">
-            <textarea class="corps">{{ p.brouillon.corps }}</textarea>
-        </div>
-        <div class="pied">
-            <div class="actions-envoi">
-                <button class="primaire" onclick="envoyerEmail({{ p.id }}, this)">Envoyer</button>
-                <button onclick="sauverBrouillon({{ p.id }}, this)">Sauver les modifs</button>
-                <button onclick="regenererUn({{ p.id }}, 'initial', this)">Regénérer</button>
-                <button class="danger" onclick="passerBrouillon({{ p.id }})">Passer</button>
-            </div>
-            <div class="programmation" id="programmation-{{ p.id }}">
-                {% if p.brouillon.date_envoi_prevue %}
-                <span class="pastille pastille-attente">Programmé : {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }}</span>
-                <button onclick="annulerProgrammation({{ p.id }}, this)">Annuler</button>
-                {% else %}
-                <input type="datetime-local" class="champ-date-programmation">
-                <button onclick="programmerEnvoi({{ p.id }}, this)">Programmer</button>
-                {% endif %}
-            </div>
-        </div>
+        {% endfor %}
     </div>
-    {% endfor %}
-    {% if not avec_brouillon %}<div class="vide">Aucun brouillon prêt pour l'instant.</div>{% endif %}
+    {% endif %}
 </div>
 
-<div id="onglet-sans" style="display: {{ 'block' if not avec_brouillon else 'none' }}">
+<div id="onglet-generer" style="display: {{ 'block' if not avec_brouillon and sans_brouillon else 'none' }}">
     {% if sans_brouillon %}
     <div class="carte">
         <p class="aide">Le bouton en haut les génère tous d'un coup (dans la limite du quota du jour). Ou génère-les un par un ci-dessous.</p>
@@ -115,6 +135,33 @@
     </div>
     {% else %}
     <div class="vide">Tous les prospects qualifiés ont déjà un brouillon.</div>
+    {% endif %}
+</div>
+
+<div id="onglet-cote" style="display: {{ 'block' if not avec_brouillon and not sans_brouillon and mis_de_cote else 'none' }}">
+    {% if mis_de_cote %}
+    <p class="aide" style="margin-bottom:10px">Ni perdus ni oubliés — reprends-les quand tu veux, ou supprime-les pour de bon.</p>
+    <div class="liste-brouillons">
+        {% for p in mis_de_cote %}
+        <div class="ligne-brouillon">
+            <button type="button" class="entete-brouillon" onclick="basculerBrouillon({{ p.id }})">
+                <span class="qui-compact">
+                    <strong>{{ p.prenom }} {{ p.nom }}</strong>
+                    <span class="aide">{{ p.entreprise or '—' }} · {{ p.brouillon.objet or '(sans objet)' }}</span>
+                </span>
+                <span class="chevron">▾</span>
+            </button>
+            <div class="detail-brouillon" id="detail-{{ p.id }}">
+                <p><strong>{{ p.brouillon.objet or '(sans objet)' }}</strong></p>
+                <p style="white-space:pre-wrap; font-size:13.5px">{{ p.brouillon.corps }}</p>
+                <div class="rangee-boutons">
+                    <button class="primaire" onclick="reprendreBrouillon({{ p.id }}, this)">Reprendre</button>
+                    <button class="danger" onclick="supprimerBrouillonDefinitif({{ p.id }}, this)">Supprimer définitivement</button>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
     {% endif %}
 </div>
 {% endif %}
