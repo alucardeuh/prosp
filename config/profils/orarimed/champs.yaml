@@ -1,12 +1,8 @@
 champs:
-- nom: specialite
-  libelle: specialite
 - nom: genre_estime
   libelle: genre_estime
 - nom: age
   libelle: age
-- nom: clinique
-  libelle: clinique
 - nom: adresse
   libelle: adresse
 - nom: telephone_clinique

@@ -406,11 +406,10 @@ function filtrerTable(champ) {
 
 let tokenImportCsv = null;
 
-const OPTIONS_CHAMPS_IMPORT_CSV = [
-  ["prenom", "Prénom"], ["nom", "Nom"], ["email", "Email"], ["telephone", "Téléphone"],
-  ["poste", "Poste"], ["entreprise", "Entreprise"], ["secteur", "Secteur"],
-  ["linkedin_url", "LinkedIn"], ["champ_perso", "Champ personnalisé"], ["ignorer", "Ignorer cette colonne"],
-];
+function optionsChampsImportCsv() {
+  const script = document.getElementById("champs-cibles-import");
+  return script ? JSON.parse(script.textContent) : [];
+}
 
 async function analyserCsv(bouton) {
   const champFichier = document.getElementById("fichier");
@@ -456,7 +455,7 @@ function afficherMappingCsv(donnees) {
       const select = document.createElement("select");
       select.dataset.colonne = col.normalise;
       select.className = "select-mapping-csv";
-      OPTIONS_CHAMPS_IMPORT_CSV.forEach(([valeur, libelle]) => {
+      optionsChampsImportCsv().forEach(([valeur, libelle]) => {
         const option = document.createElement("option");
         option.value = valeur;
         option.textContent = libelle;
@@ -488,6 +487,7 @@ async function confirmerImportCsv(bouton) {
 }
 
 function annulerImportCsv() {
+  if (tokenImportCsv) action("/ajouter/csv/annuler", { token: tokenImportCsv });
   tokenImportCsv = null;
   document.getElementById("zone-mapping-csv").style.display = "none";
   document.getElementById("fichier").value = "";

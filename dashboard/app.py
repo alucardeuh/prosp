@@ -312,7 +312,8 @@ def stats():
 @app.route("/ajouter")
 def ajouter():
     profil = db.profil_actif()
-    return render_template("ajouter.html", actif="ajouter", champs_perso=profils.load_champs(profil))
+    return render_template("ajouter.html", actif="ajouter", champs_perso=profils.load_champs(profil),
+                           champs_cibles_import=CHAMPS_CIBLES_IMPORT)
 
 
 @app.route("/parametres")
@@ -1293,19 +1294,36 @@ def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set,
 
 
 import tempfile
+import time
 import uuid
 
 # Fichiers CSV en attente de confirmation après prévisualisation — un
 # dashboard local mono-utilisateur n'a pas besoin d'un vrai stockage de
 # session, un dict en mémoire suffit (perdu si l'app redémarre entre les
-# deux étapes, ce qui n'arrive jamais en usage normal).
-_IMPORTS_EN_ATTENTE: dict[str, Path] = {}
+# deux étapes, ce qui n'arrive jamais en usage normal). Valeur = (chemin,
+# horodatage de création) — sert à purger les imports prévisualisés puis
+# jamais confirmés (onglet fermé, "Annuler" oublié...), sans quoi le
+# fichier temporaire ne serait jamais nettoyé.
+_IMPORTS_EN_ATTENTE: dict[str, tuple[Path, float]] = {}
+_DELAI_EXPIRATION_IMPORT = 30 * 60  # 30 minutes
 
 
 def _nettoyer_import_en_attente(token: str) -> None:
-    chemin = _IMPORTS_EN_ATTENTE.pop(token, None)
-    if chemin and chemin.exists():
-        chemin.unlink(missing_ok=True)
+    entree = _IMPORTS_EN_ATTENTE.pop(token, None)
+    if entree and entree[0].exists():
+        entree[0].unlink(missing_ok=True)
+
+
+def _purger_imports_expires() -> None:
+    """Nettoie les prévisualisations abandonnées depuis plus de 30 minutes
+    (onglet fermé, page rechargée sans cliquer "Annuler" ni "Confirmer") —
+    appelé au début de chaque nouvelle prévisualisation, pas besoin d'un
+    vrai planificateur pour un ménage aussi ponctuel."""
+    maintenant = time.time()
+    expires = [tok for tok, (_, cree_le) in _IMPORTS_EN_ATTENTE.items()
+              if maintenant - cree_le > _DELAI_EXPIRATION_IMPORT]
+    for tok in expires:
+        _nettoyer_import_en_attente(tok)
 
 
 def _detection_auto_colonne(norm: str) -> str:
@@ -1314,11 +1332,19 @@ def _detection_auto_colonne(norm: str) -> str:
     return "champ_perso"
 
 
+@app.route("/ajouter/csv/annuler", methods=["POST"])
+def annuler_import_csv():
+    donnees = request.get_json(silent=True) or {}
+    _nettoyer_import_en_attente(donnees.get("token", ""))
+    return jsonify({"ok": True})
+
+
 @app.route("/ajouter/csv/previsualiser", methods=["POST"])
 def previsualiser_csv():
     """Étape 1 : lit le fichier, détecte les colonnes et leur correspondance
     automatique, garde le fichier de côté (token) le temps que la personne
     ajuste si besoin. Rien n'est encore importé à ce stade."""
+    _purger_imports_expires()
     fichier = request.files.get("fichier")
     if not fichier or fichier.filename == "":
         return jsonify({"erreur": "Aucun fichier sélectionné."}), 400
@@ -1362,7 +1388,7 @@ def previsualiser_csv():
     token = uuid.uuid4().hex
     chemin_temp = Path(tempfile.gettempdir()) / f"prosp_import_{token}.csv"
     chemin_temp.write_text(contenu, encoding="utf-8")
-    _IMPORTS_EN_ATTENTE[token] = chemin_temp
+    _IMPORTS_EN_ATTENTE[token] = (chemin_temp, time.time())
 
     return jsonify({"ok": True, "token": token, "nb_lignes": len(lignes), "colonnes": colonnes})
 
@@ -1375,7 +1401,8 @@ def confirmer_csv():
     token = donnees_requete.get("token", "")
     correspondance = donnees_requete.get("mapping") or {}
 
-    chemin_temp = _IMPORTS_EN_ATTENTE.get(token)
+    entree = _IMPORTS_EN_ATTENTE.get(token)
+    chemin_temp = entree[0] if entree else None
     if not chemin_temp or not chemin_temp.exists():
         return jsonify({"erreur": "Cette prévisualisation a expiré — réessaie l'import."}), 400
 
