@@ -20,7 +20,7 @@
             <label for="niveau-recherche">Niveau de recherche web</label>
             <select id="niveau-recherche">
                 {% for nom in niveaux_recherche %}
-                <option value="{{ nom }}" {% if loop.index0 == 2 %}selected{% endif %}>{{ nom | capitalize }}</option>
+                <option value="{{ nom }}" {% if nom == niveau_recherche_defaut %}selected{% endif %}>{{ nom | capitalize }}</option>
                 {% endfor %}
             </select>
         </div>

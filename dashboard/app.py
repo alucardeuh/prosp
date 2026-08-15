@@ -265,10 +265,21 @@ def envoi():
     selection = db.list_prospects_pour_selection(profil)
     postes = sorted({p["poste"] for p in selection if p.get("poste")})
 
+    # Même logique que /parametres pour retrouver le nom du niveau
+    # correspondant à la valeur numérique enregistrée — sans ça, le
+    # sélecteur de cette page ignorait le réglage de Paramètres et
+    # présélectionnait toujours "normal" en dur, quoi qu'on ait configuré.
+    valeur_recherche = int(db.get_reglage("max_recherches_web") or 3)
+    niveau_recherche_defaut = next(
+        (nom for nom, val in email_sender.NIVEAUX_RECHERCHE.items() if val == valeur_recherche),
+        "normal",
+    )
+
     return render_template("envoi.html", avec_brouillon=actifs, mis_de_cote=de_cote, sans_brouillon=sans,
                            quota_restant=_quota_restant(), actif="envoi",
                            selection=selection, postes=postes, statuts=STATUTS,
                            niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
+                           niveau_recherche_defaut=niveau_recherche_defaut,
                            modeles=profils.load_modeles(profil))
 
 
