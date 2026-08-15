@@ -1,0 +1,9 @@
+# Sans ça, un clone du repo depuis Windows (où core.autocrlf=true est
+# souvent la config par défaut) peut convertir "Lancer Prosp.command" en
+# CRLF — et un script bash avec des fins de ligne Windows ne démarre plus
+# du tout (erreur "$'\r': command not found" sur chaque ligne). Ces deux
+# lignes forcent la bonne fin de ligne pour chaque lanceur, peu importe la
+# configuration de la machine qui clone. Guillemets nécessaires à cause des
+# espaces dans les noms (testé : le backslash ne fonctionne pas ici).
+"Lancer Prosp.command" text eol=lf
+"Lancer Prosp (Windows).bat" text eol=crlf

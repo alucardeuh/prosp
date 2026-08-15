@@ -18,6 +18,17 @@ Puis ouvre **http://127.0.0.1:5001** (port 5001 : AirPlay squatte le 5000
 sur macOS). L'interface ne tourne qu'en local (127.0.0.1), jamais exposée
 sur le réseau.
 
+### Sans Terminal (double-clic)
+
+- **macOS** : double-clique `Lancer Prosp.command` (clic droit → Ouvrir la
+  première fois, macOS bloque les fichiers téléchargés par défaut).
+- **Windows** : double-clique `Lancer Prosp (Windows).bat`. Une fenêtre
+  "Prosp - serveur" s'ouvre en arrière-plan (réduite) — ne la ferme pas tant
+  que tu utilises l'app, c'est elle qui fait tourner le serveur.
+
+Les deux installent les dépendances tout seuls au premier lancement, puis
+ouvrent directement le navigateur sur l'interface.
+
 ## Les pages
 
 - **Pipeline** (`/`) — barre de pipeline cliquable par statut, table triable
