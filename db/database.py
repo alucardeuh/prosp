@@ -177,6 +177,19 @@ def get_prospect(prospect_id: int, db_path: Path = DB_PATH) -> dict | None:
         return dict(row) if row else None
 
 
+def get_prospects(ids: list[int], db_path: Path = DB_PATH) -> list[dict]:
+    """Récupère plusieurs prospects par leurs ids en une seule requête,
+    plutôt qu'un get_prospect() par id dans une boucle — utile pour les
+    sélections sur mesure (qualification, génération) où l'appelant a déjà
+    une liste d'ids issue de cases cochées."""
+    if not ids:
+        return []
+    with get_connection(db_path) as conn:
+        marqueurs = ",".join("?" * len(ids))
+        rows = conn.execute(f"SELECT * FROM prospects WHERE id IN ({marqueurs})", list(ids)).fetchall()
+        return [dict(r) for r in rows]
+
+
 def update_prospect(prospect_id: int, data: dict, db_path: Path = DB_PATH) -> None:
     """Met à jour les champs éditables d'un prospect (fiche)."""
     data = {k: v for k, v in data.items() if k in CHAMPS_PROSPECT}
@@ -491,6 +504,43 @@ def list_brouillons(db_path: Path = DB_PATH) -> dict:
     with get_connection(db_path) as conn:
         rows = conn.execute("SELECT * FROM brouillons").fetchall()
         return {r["prospect_id"]: dict(r) for r in rows}
+
+
+def list_prospects_avec_brouillon(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+    """Prospects du profil qui ont un brouillon (avec email), chacun avec
+    son brouillon déjà attaché sous p['brouillon'] — une seule requête
+    jointe, plutôt que de récupérer TOUS les brouillons tous profils
+    confondus puis faire un get_prospect() individuel par brouillon avant
+    de filtrer (l'ancienne approche de /envoi : 1 + N requêtes au lieu
+    d'une seule, la plupart jetées après coup car d'un autre profil)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """SELECT p.*,
+                      b.objet AS b_objet, b.corps AS b_corps, b.type AS b_type,
+                      b.tokens_entree AS b_tokens_entree, b.tokens_sortie AS b_tokens_sortie,
+                      b.recherches_web AS b_recherches_web,
+                      b.date_envoi_prevue AS b_date_envoi_prevue, b.mis_de_cote AS b_mis_de_cote
+               FROM prospects p
+               JOIN brouillons b ON b.prospect_id = p.id
+               WHERE p.profil = ? AND p.email IS NOT NULL AND p.email != ''""",
+            (profil,),
+        ).fetchall()
+        resultats = []
+        for r in rows:
+            d = dict(r)
+            d["brouillon"] = {
+                "prospect_id": d["id"],
+                "objet": d.pop("b_objet"),
+                "corps": d.pop("b_corps"),
+                "type": d.pop("b_type"),
+                "tokens_entree": d.pop("b_tokens_entree"),
+                "tokens_sortie": d.pop("b_tokens_sortie"),
+                "recherches_web": d.pop("b_recherches_web"),
+                "date_envoi_prevue": d.pop("b_date_envoi_prevue"),
+                "mis_de_cote": d.pop("b_mis_de_cote"),
+            }
+            resultats.append(d)
+        return resultats
 
 
 # ---------------------------------------------------------------- quota & relances

@@ -241,20 +241,17 @@ def detail(prospect_id: int):
 @app.route("/envoi")
 def envoi():
     profil = db.profil_actif()
-    brouillons = db.list_brouillons()
 
     # Brouillons déjà créés : n'importe quel statut de qualification (écrire
     # à la main n'exige pas d'être "qualifie" — seule la génération IA en
-    # masse ci-dessous reste liée aux qualifiés). Scopé au profil actif :
-    # list_brouillons() n'est pas filtrée par profil elle-même. Séparés en
-    # deux : actifs (à traiter maintenant) et mis de côté ("Passer" ne
-    # supprime plus rien, juste range ailleurs pour ne pas perdre le texte).
-    actifs, de_cote = [], []
-    for prospect_id, brouillon in brouillons.items():
-        p = db.get_prospect(prospect_id)
-        if p and p.get("profil") == profil and p.get("email"):
-            p["brouillon"] = brouillon
-            (de_cote if brouillon.get("mis_de_cote") else actifs).append(p)
+    # masse ci-dessous reste liée aux qualifiés). Une seule requête jointe,
+    # déjà scopée au profil et filtrée sur l'email — pas de boucle avec un
+    # get_prospect() par brouillon. Séparés en deux : actifs (à traiter
+    # maintenant) et mis de côté ("Passer" ne supprime plus rien, juste
+    # range ailleurs pour ne pas perdre le texte).
+    prospects_avec_brouillon = db.list_prospects_avec_brouillon(profil)
+    actifs = [p for p in prospects_avec_brouillon if not p["brouillon"].get("mis_de_cote")]
+    de_cote = [p for p in prospects_avec_brouillon if p["brouillon"].get("mis_de_cote")]
     actifs.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
     de_cote.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
     ids_avec_brouillon = {p["id"] for p in actifs + de_cote}
@@ -386,7 +383,7 @@ def api_qualifier():
         # Sélection sur mesure : n'importe quel statut, désinscrit exclu —
         # utile pour requalifier quelqu'un après une mise à jour de l'ICP
         # ou de sa fiche, pas seulement les tout nouveaux.
-        a_qualifier = [db.get_prospect(i) for i in ids]
+        a_qualifier = db.get_prospects(ids)
         a_qualifier = [p for p in a_qualifier if p and p.get("profil") == profil
                       and p["statut"] != "desinscrit"]
         if not a_qualifier:
@@ -467,7 +464,7 @@ def api_generer_brouillons():
         # l'email serait alors rédigé avec l'ICP/le brief/la signature du
         # mauvais profil (fuite de contenu d'un profil vers les prospects
         # d'un autre). On refuse ces prospects plutôt que de mal les traiter.
-        candidats = [db.get_prospect(i) for i in ids]
+        candidats = db.get_prospects(ids)
         candidats = [p for p in candidats if p and p.get("profil") == profil
                     and p["statut"] != "desinscrit"
                     and p.get("email") and p["id"] not in brouillons]

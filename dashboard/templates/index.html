@@ -15,6 +15,9 @@
         <button id="bouton-qualifier-selection" onclick="qualifierSelectionPipeline(this)" disabled>
             Qualifier la sélection (<span id="compteur-selection-pipeline">0</span>)
         </button>
+        <button class="danger" id="bouton-supprimer-selection-pipeline" onclick="supprimerSelectionPipeline(this)" disabled>
+            Supprimer la sélection (<span id="compteur-selection-pipeline-suppr">0</span>)
+        </button>
         <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
             Vérifier les réponses
         </button>
@@ -79,7 +82,7 @@
         {% for p in prospects %}
         <tr data-recherche="{{ (p.prenom ~ ' ' ~ p.nom ~ ' ' ~ (p.entreprise or '') ~ ' ' ~ (p.poste or '') ~ ' ' ~ (p.email or '')) | lower }}"
             onclick="if (!['SELECT','OPTION','INPUT'].includes(event.target.tagName)) window.location='/prospect/{{ p.id }}'">
-            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()" {% if p.statut == 'desinscrit' %}disabled{% endif %}></td>
+            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()"></td>
             <td><strong>{{ p.prenom }} {{ p.nom }}</strong></td>
             <td>{{ p.entreprise or '—' }}</td>
             <td class="silencieux">{{ p.poste or '—' }}</td>

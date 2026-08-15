@@ -33,9 +33,11 @@ ouvrent directement le navigateur sur l'interface.
 
 - **Pipeline** (`/`) — barre de pipeline cliquable par statut, table triable
   (clic sur les en-têtes), recherche instantanée, changement de statut
-  directement dans la liste. Boutons « Qualifier les nouveaux » et
-  « Vérifier les réponses » : tout tourne en arrière-plan avec une barre de
-  progression et un bouton **Annuler**, la page ne gèle plus jamais.
+  directement dans la liste. Cases à cocher pour une **sélection précise** :
+  qualifier ou **supprimer** exactement les prospects choisis, en plus des
+  boutons "Qualifier les nouveaux" et "Vérifier les réponses" qui tournent
+  en arrière-plan avec une barre de progression et un bouton **Annuler** —
+  la page ne gèle plus jamais.
 - **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
   libre) en haut, puis trois onglets cliquables :
   - **Brouillons** — prêts à relire/envoyer/programmer, en liste compacte
