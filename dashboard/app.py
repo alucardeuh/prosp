@@ -23,6 +23,7 @@ ne gèle plus jamais, une barre de progression suit l'avancement en direct.
 from __future__ import annotations
 
 import os
+import re
 import sys
 import tempfile
 import json
@@ -1136,7 +1137,11 @@ def supprimer_champ_perso():
 
 # Alias de colonnes CSV reconnus (comparés après normalisation via
 # profils._identifiant_sur, donc insensibles à la casse et aux accents) —
-# couvre notamment les exports HubSpot en français.
+# couvre notamment les exports HubSpot en français. Sert de détection
+# AUTOMATIQUE par défaut — ajustable colonne par colonne à l'import
+# (voir /ajouter/csv/previsualiser), donc pas besoin de deviner tous les
+# synonymes possibles dans toutes les langues (ex : "clinique" pour
+# "entreprise" sur un annuaire médical).
 ALIAS_COLONNES_CSV = {
     "prenom": "prenom",
     "nom": "nom",
@@ -1148,6 +1153,36 @@ ALIAS_COLONNES_CSV = {
     "linkedin": "linkedin_url", "linkedin_url": "linkedin_url", "url_linkedin": "linkedin_url",
     "secteur": "secteur", "industry": "secteur", "industrie": "secteur",
 }
+
+# Champs cibles proposés dans le sélecteur de correspondance à l'import —
+# mêmes valeurs que celles utilisées comme cibles dans ALIAS_COLONNES_CSV,
+# plus les deux options spéciales "ignorer" et "champ personnalisé".
+CHAMPS_CIBLES_IMPORT = [
+    ("prenom", "Prénom"), ("nom", "Nom"), ("email", "Email"), ("telephone", "Téléphone"),
+    ("poste", "Poste"), ("entreprise", "Entreprise"), ("secteur", "Secteur"),
+    ("linkedin_url", "LinkedIn"), ("champ_perso", "Champ personnalisé"), ("ignorer", "Ignorer cette colonne"),
+]
+
+# Titres/qualifications fréquents en tête d'un nom complet non séparé (ex :
+# exports scrapés n'ayant qu'une seule colonne "Dr. Jonida Reveli" plutôt
+# que prénom et nom distincts) — retirés avant de séparer prénom et nom.
+TITRES_NOM_COMPLET = {"dr", "shk", "prof", "as", "m", "mme", "mr", "mlle"}
+
+
+def _separer_prenom_nom(nom_complet: str) -> tuple[str, str]:
+    """Sépare un nom complet ('Dr. Jonida Reveli') en (prénom, nom) —
+    ('Jonida', 'Reveli') — quand un CSV n'a qu'une seule colonne de nom
+    plutôt que prénom et nom distincts. Retire d'abord les titres usuels
+    (Dr., Prof., As. pour Assistent...), garde le premier mot restant comme
+    prénom, tout le reste comme nom. Repli sur (vide, texte original en
+    entier) si un seul mot subsiste : impossible de séparer, mieux vaut
+    tout garder dans nom que d'inventer un prénom."""
+    mots = re.sub(r"\s+", " ", nom_complet.strip()).split(" ")
+    while mots and mots[0].rstrip(".").lower() in TITRES_NOM_COMPLET:
+        mots.pop(0)
+    if len(mots) <= 1:
+        return "", " ".join(mots)
+    return mots[0], " ".join(mots[1:])
 
 # Colonnes spéciales des exports HubSpot : un contact peut être associé à
 # PLUSIEURS entreprises (listées séparées par ';'), et prendre juste la
@@ -1182,13 +1217,17 @@ def _entreprise_principale_hubspot(row_norm: dict) -> str:
     return liste_noms[0]
 
 
-def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tuple[dict, dict]:
+def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set,
+                      correspondance: dict[str, str] | None = None) -> tuple[dict, dict]:
     """Transforme une ligne CSV brute (en-têtes libres, ex. export HubSpot
-    en français) en (donnees_fixes, champs_perso) prêts pour add_prospect.
-    Rien n'est perdu : tout ce qui n'est pas reconnu comme champ fixe
-    devient automatiquement un champ personnalisé (créé une seule fois par
-    import, pas par ligne — noms_champs_deja_crees évite de re-tenter
-    profils.ajouter_champ 78 fois pour la même colonne)."""
+    en français ou annuaire scrapé) en (donnees_fixes, champs_perso) prêts
+    pour add_prospect. correspondance, si fourni (colonne normalisée ->
+    champ cible ou 'ignorer' ou 'champ_perso'), prend le pas sur la
+    détection automatique — ajustable à l'import, voir
+    /ajouter/csv/previsualiser. Rien n'est perdu par défaut : tout ce qui
+    n'est pas reconnu comme champ fixe devient automatiquement un champ
+    personnalisé (créé une seule fois par import, pas par ligne)."""
+    correspondance = correspondance or {}
     row_norm, entete_origine = {}, {}
     for cle, valeur in row.items():
         if not cle or not valeur:
@@ -1213,11 +1252,16 @@ def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tu
     for norm, valeur in row_norm.items():
         if norm in colonnes_traitees_a_part:
             continue
-        if norm in ALIAS_COLONNES_CSV:
-            donnees[ALIAS_COLONNES_CSV[norm]] = valeur
-        else:
+        cible = correspondance.get(norm)
+        if cible == "ignorer":
+            continue
+        if cible and cible != "champ_perso":
+            donnees[cible] = valeur
+        elif cible == "champ_perso" or (not cible and norm not in ALIAS_COLONNES_CSV):
             _creer_champ_si_besoin(norm, entete_origine[norm])
             champs_perso[norm] = valeur
+        else:
+            donnees[ALIAS_COLONNES_CSV[norm]] = valeur
 
     if _COL_ID_HUBSPOT in row_norm:
         # Même nom de champ perso que l'import API HubSpot -> dédoublonnage
@@ -1235,7 +1279,139 @@ def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tu
             _creer_champ_si_besoin("entreprises_associees", "Entreprises associées (HubSpot)")
             champs_perso["entreprises_associees"] = row_norm[_COL_ENTREPRISES]
 
+    # Une seule colonne "nom" contenant le nom complet (fréquent sur les
+    # annuaires scrapés, ex. mjeket.al : "Dr. Jonida Reveli" en une seule
+    # colonne) plutôt que prénom et nom séparés -> sépare automatiquement
+    # plutôt que de laisser prénom vide et tout jeter dans nom.
+    if donnees.get("nom") and not donnees.get("prenom"):
+        prenom_separe, nom_separe = _separer_prenom_nom(donnees["nom"])
+        if prenom_separe:
+            donnees["prenom"] = prenom_separe
+            donnees["nom"] = nom_separe
+
     return donnees, champs_perso
+
+
+import tempfile
+import uuid
+
+# Fichiers CSV en attente de confirmation après prévisualisation — un
+# dashboard local mono-utilisateur n'a pas besoin d'un vrai stockage de
+# session, un dict en mémoire suffit (perdu si l'app redémarre entre les
+# deux étapes, ce qui n'arrive jamais en usage normal).
+_IMPORTS_EN_ATTENTE: dict[str, Path] = {}
+
+
+def _nettoyer_import_en_attente(token: str) -> None:
+    chemin = _IMPORTS_EN_ATTENTE.pop(token, None)
+    if chemin and chemin.exists():
+        chemin.unlink(missing_ok=True)
+
+
+def _detection_auto_colonne(norm: str) -> str:
+    if norm in ALIAS_COLONNES_CSV:
+        return ALIAS_COLONNES_CSV[norm]
+    return "champ_perso"
+
+
+@app.route("/ajouter/csv/previsualiser", methods=["POST"])
+def previsualiser_csv():
+    """Étape 1 : lit le fichier, détecte les colonnes et leur correspondance
+    automatique, garde le fichier de côté (token) le temps que la personne
+    ajuste si besoin. Rien n'est encore importé à ce stade."""
+    fichier = request.files.get("fichier")
+    if not fichier or fichier.filename == "":
+        return jsonify({"erreur": "Aucun fichier sélectionné."}), 400
+
+    import csv as csv_module
+    import io
+
+    try:
+        contenu = fichier.read().decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return jsonify({"erreur": "Le fichier ne semble pas être un CSV encodé en "
+                                  "UTF-8 — ré-enregistre-le en UTF-8 puis réessaie."}), 400
+
+    try:
+        lignes = list(csv_module.DictReader(io.StringIO(contenu)))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"erreur": f"Fichier illisible : {exc}"}), 400
+    if not lignes:
+        return jsonify({"erreur": "Le fichier est vide."}), 400
+
+    entetes = list(lignes[0].keys())
+    premiere_ligne = lignes[0]
+    colonnes_speciales = {_COL_ENTREPRISES, _COL_ENTREPRISES_IDS,
+                          _COL_ID_ENTREPRISE_PRINCIPALE, _COL_ID_HUBSPOT}
+
+    colonnes = []
+    for entete in entetes:
+        norm = profils._identifiant_sur(entete)
+        colonnes.append({
+            "brut": entete,
+            "normalise": norm,
+            "special": norm in colonnes_speciales,
+            "cible_auto": "entreprise" if norm in (_COL_ENTREPRISES, _COL_ENTREPRISES_IDS,
+                                                    _COL_ID_ENTREPRISE_PRINCIPALE)
+                         else ("champ_perso" if norm == _COL_ID_HUBSPOT else _detection_auto_colonne(norm)),
+            "exemple": (premiere_ligne.get(entete) or "")[:80],
+        })
+
+    # Sauvegarde temporaire du contenu décodé, retrouvé à l'étape de
+    # confirmation via le token plutôt que de re-uploader le fichier.
+    token = uuid.uuid4().hex
+    chemin_temp = Path(tempfile.gettempdir()) / f"prosp_import_{token}.csv"
+    chemin_temp.write_text(contenu, encoding="utf-8")
+    _IMPORTS_EN_ATTENTE[token] = chemin_temp
+
+    return jsonify({"ok": True, "token": token, "nb_lignes": len(lignes), "colonnes": colonnes})
+
+
+@app.route("/ajouter/csv/confirmer", methods=["POST"])
+def confirmer_csv():
+    """Étape 2 : importe pour de bon, avec la correspondance éventuellement
+    ajustée par colonne (sinon la détection automatique de l'étape 1)."""
+    donnees_requete = request.get_json(silent=True) or {}
+    token = donnees_requete.get("token", "")
+    correspondance = donnees_requete.get("mapping") or {}
+
+    chemin_temp = _IMPORTS_EN_ATTENTE.get(token)
+    if not chemin_temp or not chemin_temp.exists():
+        return jsonify({"erreur": "Cette prévisualisation a expiré — réessaie l'import."}), 400
+
+    import csv as csv_module
+
+    profil = db.profil_actif()
+    ajoutes, ignores = 0, []
+    try:
+        contenu = chemin_temp.read_text(encoding="utf-8")
+        noms_champs_deja_crees = {c["nom"] for c in profils.load_champs(profil)}
+        for row in csv_module.DictReader(contenu.splitlines()):
+            donnees, champs_perso = _mapper_ligne_csv(row, profil, noms_champs_deja_crees, correspondance)
+            donnees["profil"] = profil
+            donnees.setdefault("source", "import_csv")
+            nom_affiche = f"{donnees.get('prenom', '')} {donnees.get('nom', '')}".strip() or donnees.get("email") or "?"
+            hubspot_id = champs_perso.get("hubspot_id", "")
+            deja_present = db.prospect_existe_par_email(donnees.get("email", ""), profil) or (
+                hubspot_id and db.prospect_existe_par_champ_perso("hubspot_id", hubspot_id, profil)
+            )
+            if deja_present:
+                ignores.append(nom_affiche)
+                continue
+            try:
+                db.add_prospect(donnees, champs_perso=champs_perso)
+                ajoutes += 1
+            except Exception:  # noqa: BLE001 - doublon linkedin_url le plus souvent
+                ignores.append(nom_affiche)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"erreur": f"Import impossible : {exc}"}), 400
+    finally:
+        _nettoyer_import_en_attente(token)
+
+    message = f"{ajoutes} prospect(s) importé(s) dans « {profil} »."
+    if ignores:
+        message += f" {len(ignores)} ignoré(s) (doublons) : {', '.join(ignores[:5])}{'...' if len(ignores) > 5 else ''}."
+    return jsonify({"ok": True, "message": message, "ajoutes": ajoutes, "ignores": len(ignores)})
 
 
 @app.route("/ajouter/csv", methods=["POST"])

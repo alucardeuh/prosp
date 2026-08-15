@@ -401,3 +401,94 @@ function filtrerTable(champ) {
   const compteur = document.getElementById("compteur-visible");
   if (compteur) compteur.textContent = visibles;
 }
+
+// ---------------------------------------------------------------- import CSV (prévisualisation + correspondance ajustable)
+
+let tokenImportCsv = null;
+
+const OPTIONS_CHAMPS_IMPORT_CSV = [
+  ["prenom", "Prénom"], ["nom", "Nom"], ["email", "Email"], ["telephone", "Téléphone"],
+  ["poste", "Poste"], ["entreprise", "Entreprise"], ["secteur", "Secteur"],
+  ["linkedin_url", "LinkedIn"], ["champ_perso", "Champ personnalisé"], ["ignorer", "Ignorer cette colonne"],
+];
+
+async function analyserCsv(bouton) {
+  const champFichier = document.getElementById("fichier");
+  if (!champFichier.files.length) { toast("Choisis un fichier d'abord.", "erreur"); return; }
+  bouton.disabled = true;
+  const formData = new FormData();
+  formData.append("fichier", champFichier.files[0]);
+  try {
+    const reponse = await fetch("/ajouter/csv/previsualiser", { method: "POST", body: formData });
+    const donnees = await reponse.json();
+    bouton.disabled = false;
+    if (!reponse.ok) { toast(donnees.erreur || "Fichier illisible.", "erreur"); return; }
+    tokenImportCsv = donnees.token;
+    afficherMappingCsv(donnees);
+  } catch (e) {
+    bouton.disabled = false;
+    toast("Le serveur ne répond pas — vérifie qu'il tourne toujours.", "erreur");
+  }
+}
+
+function afficherMappingCsv(donnees) {
+  document.getElementById("resume-import-csv").textContent =
+    donnees.nb_lignes + " ligne(s) détectée(s). Vérifie la correspondance ci-dessous, ajuste si besoin, puis confirme.";
+
+  const corps = document.querySelector("#table-mapping-csv tbody");
+  corps.innerHTML = "";
+  donnees.colonnes.forEach((col) => {
+    const tr = document.createElement("tr");
+
+    const tdBrut = document.createElement("td");
+    tdBrut.textContent = col.brut;
+    tr.appendChild(tdBrut);
+
+    const tdExemple = document.createElement("td");
+    tdExemple.className = "silencieux";
+    tdExemple.textContent = col.exemple || "—";
+    tr.appendChild(tdExemple);
+
+    const tdCible = document.createElement("td");
+    if (col.special) {
+      tdCible.innerHTML = '<span class="pastille pastille-off">détection automatique (HubSpot)</span>';
+    } else {
+      const select = document.createElement("select");
+      select.dataset.colonne = col.normalise;
+      select.className = "select-mapping-csv";
+      OPTIONS_CHAMPS_IMPORT_CSV.forEach(([valeur, libelle]) => {
+        const option = document.createElement("option");
+        option.value = valeur;
+        option.textContent = libelle;
+        if (valeur === col.cible_auto) option.selected = true;
+        select.appendChild(option);
+      });
+      tdCible.appendChild(select);
+    }
+    tr.appendChild(tdCible);
+    corps.appendChild(tr);
+  });
+
+  document.getElementById("zone-mapping-csv").style.display = "block";
+}
+
+async function confirmerImportCsv(bouton) {
+  if (!tokenImportCsv) return;
+  const mapping = {};
+  document.querySelectorAll(".select-mapping-csv").forEach((sel) => {
+    mapping[sel.dataset.colonne] = sel.value;
+  });
+  bouton.disabled = true;
+  const donnees = await action(
+    "/ajouter/csv/confirmer",
+    { token: tokenImportCsv, mapping: mapping },
+    { recharger: true, delai: 600 }
+  );
+  if (!donnees) bouton.disabled = false;
+}
+
+function annulerImportCsv() {
+  tokenImportCsv = null;
+  document.getElementById("zone-mapping-csv").style.display = "none";
+  document.getElementById("fichier").value = "";
+}

@@ -52,19 +52,37 @@
             majuscules sans importance) : prénom, nom, email, téléphone,
             poste, entreprise, secteur, LinkedIn — dont les exports HubSpot
             (gère aussi l'entreprise "principale" quand plusieurs sont
-            associées à un contact). Toute autre colonne devient
-            automatiquement un champ personnalisé plutôt que d'être perdue.
+            associées à un contact). Une seule colonne "nom" avec le nom
+            complet (ex. "Dr. Jonida Reveli") est séparée automatiquement en
+            prénom et nom. Après analyse, vérifie et ajuste la correspondance
+            de chaque colonne avant de confirmer — utile si tes propres noms
+            de colonnes ne correspondent à rien de connu (ex. "clinique" pour
+            ce qui doit devenir "entreprise").
             {% if champs_perso %}Champs personnalisés actuels :
             <span class="mono">{{ champs_perso | map(attribute='nom') | join(', ') }}</span>.{% endif %}
             Doublons (email ou LinkedIn déjà en base) rejetés proprement.
         </p>
-        <form method="post" action="/ajouter/csv" enctype="multipart/form-data" style="margin-top:12px">
+        <form id="form-import-csv" onsubmit="return false;" style="margin-top:12px">
             <label for="fichier">Fichier CSV</label>
             <input type="file" id="fichier" name="fichier" accept=".csv" required>
             <div class="rangee-boutons" style="margin-top:16px">
-                <button type="submit" class="primaire">Importer</button>
+                <button type="button" class="primaire" onclick="analyserCsv(this)">Analyser le fichier</button>
             </div>
         </form>
+
+        <div id="zone-mapping-csv" style="display:none; margin-top:20px">
+            <p class="aide" id="resume-import-csv"></p>
+            <div class="table-englobe">
+            <table id="table-mapping-csv">
+                <thead><tr><th>Colonne du fichier</th><th>Exemple</th><th>Correspond à</th></tr></thead>
+                <tbody></tbody>
+            </table>
+            </div>
+            <div class="rangee-boutons" style="margin-top:14px">
+                <button class="primaire" onclick="confirmerImportCsv(this)">Confirmer l'import</button>
+                <button class="danger" onclick="annulerImportCsv()">Annuler</button>
+            </div>
+        </div>
     </div>
 
     <div class="carte">

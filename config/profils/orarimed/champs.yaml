@@ -1,1 +1,25 @@
-champs: []
+champs:
+- nom: specialite
+  libelle: specialite
+- nom: genre_estime
+  libelle: genre_estime
+- nom: age
+  libelle: age
+- nom: clinique
+  libelle: clinique
+- nom: adresse
+  libelle: adresse
+- nom: telephone_clinique
+  libelle: telephone_clinique
+- nom: website_perso
+  libelle: website_perso
+- nom: procedures_services
+  libelle: procedures_services
+- nom: statut_fiche
+  libelle: statut_fiche
+- nom: url_profil
+  libelle: url_profil
+- nom: url_source
+  libelle: url_source
+- nom: cellulaire
+  libelle: cellulaire
