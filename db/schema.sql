@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS prospects (
     secteur             TEXT,
     taille_entreprise   TEXT,
     linkedin_url        TEXT UNIQUE,
+    telephone           TEXT,
     getsales_lead_uuid  TEXT,
     email               TEXT,
 

@@ -12,6 +12,9 @@
                 {% if not counts.get('nouveau') %}disabled title="Aucun prospect « nouveau »"{% endif %}>
             Qualifier les nouveaux ({{ counts.get('nouveau', 0) }})
         </button>
+        <button id="bouton-qualifier-selection" onclick="qualifierSelectionPipeline(this)" disabled>
+            Qualifier la sélection (<span id="compteur-selection-pipeline">0</span>)
+        </button>
         <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
             Vérifier les réponses
         </button>
@@ -63,6 +66,7 @@
 <table id="table-prospects">
     <thead>
         <tr>
+            <th><input type="checkbox" id="tout-cocher-pipeline" onchange="toutCocherPipeline(this)" aria-label="Tout sélectionner"></th>
             <th>{{ lien_tri('nom', 'Nom') }}</th>
             <th>{{ lien_tri('entreprise', 'Entreprise') }}</th>
             <th>Poste</th>
@@ -74,7 +78,8 @@
     <tbody>
         {% for p in prospects %}
         <tr data-recherche="{{ (p.prenom ~ ' ' ~ p.nom ~ ' ' ~ (p.entreprise or '') ~ ' ' ~ (p.poste or '') ~ ' ' ~ (p.email or '')) | lower }}"
-            onclick="if (event.target.tagName !== 'SELECT' && event.target.tagName !== 'OPTION') window.location='/prospect/{{ p.id }}'">
+            onclick="if (!['SELECT','OPTION','INPUT'].includes(event.target.tagName)) window.location='/prospect/{{ p.id }}'">
+            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()" {% if p.statut == 'desinscrit' %}disabled{% endif %}></td>
             <td><strong>{{ p.prenom }} {{ p.nom }}</strong></td>
             <td>{{ p.entreprise or '—' }}</td>
             <td class="silencieux">{{ p.poste or '—' }}</td>

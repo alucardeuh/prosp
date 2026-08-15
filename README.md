@@ -58,10 +58,13 @@ ouvrent directement le navigateur sur l'interface.
   arrivent dans le **même fil Gmail** que le premier email (pas un nouveau
   message isolé), angle nouveau, jamais de recherche web.
 - **Ajouter** (`/ajouter`) — un prospect à la main, import CSV en masse
-  (doublons rejetés proprement), et gestion des **champs personnalisés** :
+  (reconnaît les intitulés courants même avec accents/majuscules, dont les
+  exports HubSpot — gère l'entreprise "principale" quand plusieurs sont
+  associées à un contact, capture automatiquement en champ personnalisé
+  tout ce qui n'est pas reconnu plutôt que de le perdre, dédoublonne par
+  email et par ID HubSpot), et gestion des **champs personnalisés** :
   ajoute ou retire des variables propres à un profil (ex. « Budget estimé »)
-  en plus des champs de base — reconnues automatiquement dans un CSV,
-  éditables sur chaque fiche.
+  en plus des champs de base — éditables sur chaque fiche.
 - **Modèles** (`/modeles`) — emails qui ont déjà bien marché (par profil).
   Claude s'en inspire pour le ton et la structure à chaque rédaction IA
   (jamais recopiés mot pour mot).

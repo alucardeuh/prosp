@@ -48,10 +48,15 @@
     <div class="carte">
         <h2>Import en masse (CSV)</h2>
         <p class="aide">
-            Colonnes reconnues : <span class="mono">prenom, nom, poste, entreprise, secteur,
-            taille_entreprise, linkedin_url, email, notes</span>{% if champs_perso %}, plus tes champs
-            personnalisés (colonne nommée exactement <span class="mono">{{ champs_perso[0].nom }}</span>{% if champs_perso|length > 1 %}, etc.{% endif %}){% endif %}.
-            Les colonnes manquantes sont ignorées, les doublons (même LinkedIn) rejetés proprement.
+            Reconnaît les intitulés courants (français ou anglais, accents et
+            majuscules sans importance) : prénom, nom, email, téléphone,
+            poste, entreprise, secteur, LinkedIn — dont les exports HubSpot
+            (gère aussi l'entreprise "principale" quand plusieurs sont
+            associées à un contact). Toute autre colonne devient
+            automatiquement un champ personnalisé plutôt que d'être perdue.
+            {% if champs_perso %}Champs personnalisés actuels :
+            <span class="mono">{{ champs_perso | map(attribute='nom') | join(', ') }}</span>.{% endif %}
+            Doublons (email ou LinkedIn déjà en base) rejetés proprement.
         </p>
         <form method="post" action="/ajouter/csv" enctype="multipart/form-data" style="margin-top:12px">
             <label for="fichier">Fichier CSV</label>
@@ -74,6 +79,7 @@
                 <div><label for="taille">Taille</label><input type="text" id="taille" name="taille" placeholder="ex : 50-200"></div>
                 <div><label for="email">Email</label><input type="email" id="email" name="email"></div>
                 <div><label for="linkedin">LinkedIn</label><input type="text" id="linkedin" name="linkedin"></div>
+                <div><label for="telephone">Téléphone</label><input type="text" id="telephone" name="telephone"></div>
                 {% for c in champs_perso %}
                 <div><label for="champ_{{ c.nom }}">{{ c.libelle }}</label><input type="text" id="champ_{{ c.nom }}" name="champ_{{ c.nom }}"></div>
                 {% endfor %}

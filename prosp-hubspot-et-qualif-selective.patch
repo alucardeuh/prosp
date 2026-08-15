@@ -1,0 +1,489 @@
+diff --git a/README.md b/README.md
+index 1712e93..4344836 100644
+--- a/README.md
++++ b/README.md
+@@ -58,10 +58,13 @@ ouvrent directement le navigateur sur l'interface.
+   arrivent dans le **même fil Gmail** que le premier email (pas un nouveau
+   message isolé), angle nouveau, jamais de recherche web.
+ - **Ajouter** (`/ajouter`) — un prospect à la main, import CSV en masse
+-  (doublons rejetés proprement), et gestion des **champs personnalisés** :
++  (reconnaît les intitulés courants même avec accents/majuscules, dont les
++  exports HubSpot — gère l'entreprise "principale" quand plusieurs sont
++  associées à un contact, capture automatiquement en champ personnalisé
++  tout ce qui n'est pas reconnu plutôt que de le perdre, dédoublonne par
++  email et par ID HubSpot), et gestion des **champs personnalisés** :
+   ajoute ou retire des variables propres à un profil (ex. « Budget estimé »)
+-  en plus des champs de base — reconnues automatiquement dans un CSV,
+-  éditables sur chaque fiche.
++  en plus des champs de base — éditables sur chaque fiche.
+ - **Modèles** (`/modeles`) — emails qui ont déjà bien marché (par profil).
+   Claude s'en inspire pour le ton et la structure à chaque rédaction IA
+   (jamais recopiés mot pour mot).
+diff --git a/dashboard/app.py b/dashboard/app.py
+index 4fe4aa4..afd97ce 100644
+--- a/dashboard/app.py
++++ b/dashboard/app.py
+@@ -323,6 +323,7 @@ def parametres():
+         "delai_relance_jours": db.get_reglage("delai_relance_jours"),
+         "max_relances": db.get_reglage("max_relances"),
+         "max_recherches_web": niveau_defaut,
++        "niveau_reflexion": db.get_reglage("niveau_reflexion") or "desactive",
+     }
+     cle_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
+     anthropic_config = {
+@@ -367,9 +368,22 @@ def api_qualifier():
+         return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
+     profil = db.profil_actif()
+     icp = profils.load_icp(profil)
+-    nouveaux = db.list_prospects(statut="nouveau", profil=profil)
+-    if not nouveaux:
+-        return jsonify({"erreur": "Aucun prospect au statut « nouveau » à qualifier."}), 400
++
++    donnees = request.get_json(silent=True) or {}
++    ids = donnees.get("ids")
++    if ids:
++        # Sélection sur mesure : n'importe quel statut, désinscrit exclu —
++        # utile pour requalifier quelqu'un après une mise à jour de l'ICP
++        # ou de sa fiche, pas seulement les tout nouveaux.
++        a_qualifier = [db.get_prospect(i) for i in ids]
++        a_qualifier = [p for p in a_qualifier if p and p.get("profil") == profil
++                      and p["statut"] != "desinscrit"]
++        if not a_qualifier:
++            return jsonify({"erreur": "Aucun prospect à qualifier dans cette sélection."}), 400
++    else:
++        a_qualifier = db.list_prospects(statut="nouveau", profil=profil)
++        if not a_qualifier:
++            return jsonify({"erreur": "Aucun prospect au statut « nouveau » à qualifier."}), 400
+ 
+     def traiter(p, log):
+         resultat = qualification.qualifier_un(p, icp)
+@@ -377,7 +391,7 @@ def api_qualifier():
+         return f"{p.get('prenom','')} {p.get('nom','')} ({p.get('entreprise','')}) : {etat}, score {resultat['score']}"
+ 
+     try:
+-        job_id = jobs.lancer(f"Qualification de {len(nouveaux)} prospect(s)", nouveaux, traiter)
++        job_id = jobs.lancer(f"Qualification de {len(a_qualifier)} prospect(s)", a_qualifier, traiter)
+     except RuntimeError as exc:
+         return jsonify({"erreur": str(exc)}), 409
+     return jsonify({"job_id": job_id})
+@@ -409,8 +423,15 @@ def api_generer_brouillons():
+     ids = donnees.get("ids")
+     if ids:
+         # Sélection sur mesure : n'importe quel statut, désinscrit exclu.
++        # Scopé au profil ACTIF : la page /envoi ne liste que ses prospects,
++        # mais si le profil change dans un autre onglet entre l'affichage et
++        # le clic, les ids reçus peuvent appartenir à un autre profil — et
++        # l'email serait alors rédigé avec l'ICP/le brief/la signature du
++        # mauvais profil (fuite de contenu d'un profil vers les prospects
++        # d'un autre). On refuse ces prospects plutôt que de mal les traiter.
+         candidats = [db.get_prospect(i) for i in ids]
+-        candidats = [p for p in candidats if p and p["statut"] != "desinscrit"
++        candidats = [p for p in candidats if p and p.get("profil") == profil
++                    and p["statut"] != "desinscrit"
+                     and p.get("email") and p["id"] not in brouillons]
+     elif type_ == "relance":
+         candidats = [p for p in _relances_dues(profil) if p["id"] not in brouillons]
+@@ -420,7 +441,16 @@ def api_generer_brouillons():
+                      if p.get("email") and p["id"] not in brouillons]
+ 
+     quota = _quota_restant()
+-    deja_prets = len(brouillons)
++    # Seuls les brouillons ACTIFS comptent contre le plafond : un brouillon
++    # « mis de côté » est explicitement rangé pour plus tard, il ne sera pas
++    # envoyé aujourd'hui — le compter revenait à ce que chaque brouillon
++    # rangé ampute définitivement la capacité de génération quotidienne
++    # (jusqu'à la bloquer complètement, y compris pour les AUTRES profils,
++    # puisque les brouillons ne sont pas scopés par profil ici). Le quota
++    # d'envoi restant, lui, reste bien global tous profils (une seule
++    # réputation d'envoi) — c'est voulu, seul le décompte des brouillons
++    # change.
++    deja_prets = sum(1 for b in brouillons.values() if not b.get("mis_de_cote"))
+     plafond = max(0, quota - deja_prets)
+     if plafond <= 0:
+         return jsonify({"erreur": "Quota d'envois du jour déjà couvert par les brouillons existants."}), 400
+@@ -482,6 +512,19 @@ def api_verifier_emails():
+     profil = db.profil_actif()
+     prospects = db.list_prospects_avec_email(profil)
+     if not prospects:
++        # Deux situations très différentes derrière une liste vide :
++        # list_prospects_avec_email ne retient que les prospects déjà
++        # CONTACTÉS via l'outil (on ne peut pas avoir reçu une réponse à un
++        # email jamais envoyé). Dire « aucun prospect avec email » à
++        # quelqu'un qui en a 50 en base était trompeur et bloquant.
++        avec_email = [p for p in db.list_prospects(profil=profil) if p.get("email")]
++        if avec_email:
++            return jsonify({"erreur": (
++                "Aucun prospect de ce profil n'a encore été contacté depuis "
++                "l'outil — le scan ne cherche que les réponses aux emails "
++                "envoyés d'ici. Envoie d'abord un premier email (page Envoi), "
++                "puis relance la vérification."
++            )}), 400
+         return jsonify({"erreur": "Aucun prospect avec une adresse email en base pour ce profil."}), 400
+ 
+     # La collecte Gmail se fait dans le job (elle peut être longue elle aussi).
+@@ -789,6 +832,11 @@ def parametres_reglages():
+     niveau = request.form.get("max_recherches_web", "normal")
+     db.set_reglage("max_recherches_web", str(email_sender.NIVEAUX_RECHERCHE.get(niveau, 3)))
+ 
++    niveau_reflexion = request.form.get("niveau_reflexion", "desactive")
++    if niveau_reflexion not in email_sender.NIVEAUX_REFLEXION:
++        niveau_reflexion = "desactive"
++    db.set_reglage("niveau_reflexion", niveau_reflexion)
++
+     flash("Réglages enregistrés.", "succes")
+     return redirect(url_for("parametres"))
+ 
+@@ -975,6 +1023,7 @@ def ajouter_manuel():
+         "taille_entreprise": request.form.get("taille", ""),
+         "email": request.form.get("email") or None,
+         "linkedin_url": request.form.get("linkedin") or None,
++        "telephone": request.form.get("telephone") or None,
+         "notes": request.form.get("notes") or None,
+         "source": "interface",
+         "profil": profil,
+@@ -1050,6 +1099,110 @@ def supprimer_champ_perso():
+     return redirect(url_for("ajouter"))
+ 
+ 
++# Alias de colonnes CSV reconnus (comparés après normalisation via
++# profils._identifiant_sur, donc insensibles à la casse et aux accents) —
++# couvre notamment les exports HubSpot en français.
++ALIAS_COLONNES_CSV = {
++    "prenom": "prenom",
++    "nom": "nom",
++    "email": "email", "e_mail": "email", "adresse_email": "email",
++    "telephone": "telephone", "numero_de_telephone": "telephone", "tel": "telephone",
++    "poste": "poste", "titre": "poste", "fonction": "poste", "job_title": "poste",
++    "entreprise": "entreprise", "societe": "entreprise", "company": "entreprise",
++    "company_name": "entreprise", "nom_de_l_entreprise": "entreprise",
++    "linkedin": "linkedin_url", "linkedin_url": "linkedin_url", "url_linkedin": "linkedin_url",
++    "secteur": "secteur", "industry": "secteur", "industrie": "secteur",
++}
++
++# Colonnes spéciales des exports HubSpot : un contact peut être associé à
++# PLUSIEURS entreprises (listées séparées par ';'), et prendre juste la
++# première donnerait parfois la mauvaise — l'ordre n'est pas garanti
++# "principale en premier". On croise plutôt les IDs pour trouver la bonne.
++_COL_ENTREPRISES = "associated_company"
++_COL_ENTREPRISES_IDS = "associated_company_ids"
++_COL_ID_ENTREPRISE_PRINCIPALE = "id_de_l_entreprise_principale_associee"
++_COL_ID_HUBSPOT = "id_de_fiche_d_informations"
++
++
++def _entreprise_principale_hubspot(row_norm: dict) -> str:
++    """'Associated Company IDs' liste les IDs dans le même ordre que les
++    noms dans 'Associated Company' ; 'ID de l'entreprise principale
++    associée' indique lequel des deux (ou plus) est la bonne. Repli sur la
++    première de la liste si le croisement échoue — au moins une valeur
++    plutôt qu'aucune."""
++    noms = row_norm.get(_COL_ENTREPRISES, "")
++    if not noms:
++        return ""
++    liste_noms = [n.strip() for n in noms.split(";") if n.strip()]
++    if not liste_noms:
++        return ""
++    id_principal = row_norm.get(_COL_ID_ENTREPRISE_PRINCIPALE, "").strip()
++    ids = row_norm.get(_COL_ENTREPRISES_IDS, "")
++    if id_principal and ids:
++        liste_ids = [i.strip() for i in ids.split(";")]
++        if id_principal in liste_ids:
++            index = liste_ids.index(id_principal)
++            if index < len(liste_noms):
++                return liste_noms[index]
++    return liste_noms[0]
++
++
++def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tuple[dict, dict]:
++    """Transforme une ligne CSV brute (en-têtes libres, ex. export HubSpot
++    en français) en (donnees_fixes, champs_perso) prêts pour add_prospect.
++    Rien n'est perdu : tout ce qui n'est pas reconnu comme champ fixe
++    devient automatiquement un champ personnalisé (créé une seule fois par
++    import, pas par ligne — noms_champs_deja_crees évite de re-tenter
++    profils.ajouter_champ 78 fois pour la même colonne)."""
++    row_norm, entete_origine = {}, {}
++    for cle, valeur in row.items():
++        if not cle or not valeur:
++            continue
++        norm = profils._identifiant_sur(cle)
++        row_norm[norm] = valeur.strip()
++        entete_origine[norm] = cle.strip()
++
++    def _creer_champ_si_besoin(nom: str, libelle: str) -> None:
++        if nom in noms_champs_deja_crees:
++            return
++        try:
++            profils.ajouter_champ(profil, nom, libelle)
++        except ValueError:
++            pass  # déjà existant (colonne vue sur une ligne précédente, ou nom réservé) -> pas bloquant
++        noms_champs_deja_crees.add(nom)
++
++    donnees, champs_perso = {}, {}
++    colonnes_traitees_a_part = {_COL_ENTREPRISES, _COL_ENTREPRISES_IDS,
++                                _COL_ID_ENTREPRISE_PRINCIPALE, _COL_ID_HUBSPOT}
++
++    for norm, valeur in row_norm.items():
++        if norm in colonnes_traitees_a_part:
++            continue
++        if norm in ALIAS_COLONNES_CSV:
++            donnees[ALIAS_COLONNES_CSV[norm]] = valeur
++        else:
++            _creer_champ_si_besoin(norm, entete_origine[norm])
++            champs_perso[norm] = valeur
++
++    if _COL_ID_HUBSPOT in row_norm:
++        # Même nom de champ perso que l'import API HubSpot -> dédoublonnage
++        # cohérent quelle que soit la méthode d'import utilisée.
++        _creer_champ_si_besoin("hubspot_id", "HubSpot ID")
++        champs_perso["hubspot_id"] = row_norm[_COL_ID_HUBSPOT]
++
++    if "entreprise" not in donnees:
++        entreprise = _entreprise_principale_hubspot(row_norm)
++        if entreprise:
++            donnees["entreprise"] = entreprise
++        if ";" in row_norm.get(_COL_ENTREPRISES, ""):
++            # Plusieurs entreprises associées : garde le détail complet en
++            # plus de la principale retenue ci-dessus.
++            _creer_champ_si_besoin("entreprises_associees", "Entreprises associées (HubSpot)")
++            champs_perso["entreprises_associees"] = row_norm[_COL_ENTREPRISES]
++
++    return donnees, champs_perso
++
++
+ @app.route("/ajouter/csv", methods=["POST"])
+ def ajouter_csv():
+     fichier = request.files.get("fichier")
+@@ -1076,18 +1229,36 @@ def ajouter_csv():
+         return redirect(url_for("ajouter"))
+ 
+     try:
+-        noms_champs = {c["nom"] for c in profils.load_champs(profil)}
++        noms_champs_deja_crees = {c["nom"] for c in profils.load_champs(profil)}
+         for row in csv_module.DictReader(io.StringIO(contenu)):
+-            brut = {k.strip(): v for k, v in row.items() if k and v}
+-            donnees = {k: v for k, v in brut.items() if k not in noms_champs}
+-            champs_perso = {k: v for k, v in brut.items() if k in noms_champs}
++            donnees, champs_perso = _mapper_ligne_csv(row, profil, noms_champs_deja_crees)
+             donnees["profil"] = profil
+             donnees.setdefault("source", "import_csv")
++            nom_affiche = f"{donnees.get('prenom', '')} {donnees.get('nom', '')}".strip() or donnees.get("email") or "?"
++            # Dédoublonnage par email au sein du profil : la contrainte UNIQUE
++            # de la base ne porte que sur linkedin_url — un CSV sans colonne
++            # LinkedIn ré-importé créait des doublons silencieux, chacun
++            # recevant ensuite son propre brouillon (même personne emailée
++            # plusieurs fois). Le doublon est compté et affiché comme les
++            # autres, pas ignoré en silence. Une ligne sans email n'est
++            # jamais un doublon d'une autre ligne sans email (impossible à
++            # comparer) — chacune reste un prospect à part entière.
++            # Dédoublonnage par email ET par hubspot_id : un contact sans
++            # email (ça arrive — 11 sur 78 dans un vrai export HubSpot) ne
++            # peut jamais matcher sur l'email seul, il se recréerait donc en
++            # double à chaque réimport si on ne vérifiait que ça.
++            hubspot_id = champs_perso.get("hubspot_id", "")
++            deja_present = db.prospect_existe_par_email(donnees.get("email", ""), profil) or (
++                hubspot_id and db.prospect_existe_par_champ_perso("hubspot_id", hubspot_id, profil)
++            )
++            if deja_present:
++                ignores.append(nom_affiche)
++                continue
+             try:
+                 db.add_prospect(donnees, champs_perso=champs_perso)
+                 ajoutes += 1
+             except Exception:  # noqa: BLE001 - doublon linkedin_url le plus souvent
+-                ignores.append(row.get("nom") or row.get("email") or "?")
++                ignores.append(nom_affiche)
+     except Exception as exc:  # noqa: BLE001
+         flash(f"Import impossible : {exc}", "erreur")
+         return redirect(url_for("ajouter"))
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index 2381b9f..4471b69 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -279,6 +279,28 @@ function toutCocher(caseATout) {
+   majCompteurSelection();
+ }
+ 
++// ---------------------------------------------------------------- sélection (page Pipeline, qualification)
++
++function toutCocherPipeline(caseATout) {
++  document.querySelectorAll("#table-prospects .case-selection-pipeline:not(:disabled)").forEach((c) => {
++    if (c.closest("tr").style.display !== "none") c.checked = caseATout.checked;
++  });
++  majCompteurSelectionPipeline();
++}
++
++function majCompteurSelectionPipeline() {
++  const cochees = document.querySelectorAll("#table-prospects .case-selection-pipeline:checked").length;
++  document.getElementById("compteur-selection-pipeline").textContent = cochees;
++  document.getElementById("bouton-qualifier-selection").disabled = cochees === 0;
++}
++
++async function qualifierSelectionPipeline(bouton) {
++  const ids = Array.from(document.querySelectorAll("#table-prospects .case-selection-pipeline:checked"))
++    .map((c) => parseInt(c.value, 10));
++  if (!ids.length) return;
++  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton);
++}
++
+ function majCompteurSelection() {
+   const cochees = document.querySelectorAll("#table-selection .case-selection:checked").length;
+   document.getElementById("compteur-selection").textContent = cochees;
+@@ -342,7 +364,12 @@ function filtrerTable(champ) {
+     const ok = !motif || tr.dataset.recherche.includes(motif);
+     tr.style.display = ok ? "" : "none";
+     if (ok) visibles++;
++    else {
++      const case_ = tr.querySelector(".case-selection-pipeline");
++      if (case_) case_.checked = false;
++    }
+   });
++  majCompteurSelectionPipeline();
+   const compteur = document.getElementById("compteur-visible");
+   if (compteur) compteur.textContent = visibles;
+ }
+diff --git a/dashboard/templates/ajouter.html b/dashboard/templates/ajouter.html
+index 7f06c12..1c1585d 100644
+--- a/dashboard/templates/ajouter.html
++++ b/dashboard/templates/ajouter.html
+@@ -48,10 +48,15 @@
+     <div class="carte">
+         <h2>Import en masse (CSV)</h2>
+         <p class="aide">
+-            Colonnes reconnues : <span class="mono">prenom, nom, poste, entreprise, secteur,
+-            taille_entreprise, linkedin_url, email, notes</span>{% if champs_perso %}, plus tes champs
+-            personnalisés (colonne nommée exactement <span class="mono">{{ champs_perso[0].nom }}</span>{% if champs_perso|length > 1 %}, etc.{% endif %}){% endif %}.
+-            Les colonnes manquantes sont ignorées, les doublons (même LinkedIn) rejetés proprement.
++            Reconnaît les intitulés courants (français ou anglais, accents et
++            majuscules sans importance) : prénom, nom, email, téléphone,
++            poste, entreprise, secteur, LinkedIn — dont les exports HubSpot
++            (gère aussi l'entreprise "principale" quand plusieurs sont
++            associées à un contact). Toute autre colonne devient
++            automatiquement un champ personnalisé plutôt que d'être perdue.
++            {% if champs_perso %}Champs personnalisés actuels :
++            <span class="mono">{{ champs_perso | map(attribute='nom') | join(', ') }}</span>.{% endif %}
++            Doublons (email ou LinkedIn déjà en base) rejetés proprement.
+         </p>
+         <form method="post" action="/ajouter/csv" enctype="multipart/form-data" style="margin-top:12px">
+             <label for="fichier">Fichier CSV</label>
+@@ -74,6 +79,7 @@
+                 <div><label for="taille">Taille</label><input type="text" id="taille" name="taille" placeholder="ex : 50-200"></div>
+                 <div><label for="email">Email</label><input type="email" id="email" name="email"></div>
+                 <div><label for="linkedin">LinkedIn</label><input type="text" id="linkedin" name="linkedin"></div>
++                <div><label for="telephone">Téléphone</label><input type="text" id="telephone" name="telephone"></div>
+                 {% for c in champs_perso %}
+                 <div><label for="champ_{{ c.nom }}">{{ c.libelle }}</label><input type="text" id="champ_{{ c.nom }}" name="champ_{{ c.nom }}"></div>
+                 {% endfor %}
+diff --git a/dashboard/templates/index.html b/dashboard/templates/index.html
+index 793ad5f..5bfc2e8 100644
+--- a/dashboard/templates/index.html
++++ b/dashboard/templates/index.html
+@@ -12,6 +12,9 @@
+                 {% if not counts.get('nouveau') %}disabled title="Aucun prospect « nouveau »"{% endif %}>
+             Qualifier les nouveaux ({{ counts.get('nouveau', 0) }})
+         </button>
++        <button id="bouton-qualifier-selection" onclick="qualifierSelectionPipeline(this)" disabled>
++            Qualifier la sélection (<span id="compteur-selection-pipeline">0</span>)
++        </button>
+         <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
+             Vérifier les réponses
+         </button>
+@@ -63,6 +66,7 @@
+ <table id="table-prospects">
+     <thead>
+         <tr>
++            <th><input type="checkbox" id="tout-cocher-pipeline" onchange="toutCocherPipeline(this)" aria-label="Tout sélectionner"></th>
+             <th>{{ lien_tri('nom', 'Nom') }}</th>
+             <th>{{ lien_tri('entreprise', 'Entreprise') }}</th>
+             <th>Poste</th>
+@@ -74,7 +78,8 @@
+     <tbody>
+         {% for p in prospects %}
+         <tr data-recherche="{{ (p.prenom ~ ' ' ~ p.nom ~ ' ' ~ (p.entreprise or '') ~ ' ' ~ (p.poste or '') ~ ' ' ~ (p.email or '')) | lower }}"
+-            onclick="if (event.target.tagName !== 'SELECT' && event.target.tagName !== 'OPTION') window.location='/prospect/{{ p.id }}'">
++            onclick="if (!['SELECT','OPTION','INPUT'].includes(event.target.tagName)) window.location='/prospect/{{ p.id }}'">
++            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()" {% if p.statut == 'desinscrit' %}disabled{% endif %}></td>
+             <td><strong>{{ p.prenom }} {{ p.nom }}</strong></td>
+             <td>{{ p.entreprise or '—' }}</td>
+             <td class="silencieux">{{ p.poste or '—' }}</td>
+diff --git a/dashboard/templates/prospect.html b/dashboard/templates/prospect.html
+index a0e092b..b5a4959 100644
+--- a/dashboard/templates/prospect.html
++++ b/dashboard/templates/prospect.html
+@@ -40,6 +40,7 @@
+                     </div>
+                 </div>
+                 <div><label>LinkedIn</label><input name="linkedin_url" value="{{ prospect.linkedin_url or '' }}"></div>
++                <div><label>Téléphone</label><input name="telephone" value="{{ prospect.telephone or '' }}"></div>
+                 {% for c in champs_perso %}
+                 <div><label>{{ c.libelle }}</label><input name="{{ c.nom }}" value="{{ valeurs_perso.get(c.nom, '') }}"></div>
+                 {% endfor %}
+diff --git a/db/database.py b/db/database.py
+index ebf07f0..383feb3 100644
+--- a/db/database.py
++++ b/db/database.py
+@@ -24,6 +24,11 @@ REGLAGES_DEFAUT = {
+     # $10/1000 recherches + le coût en tokens du contenu rapporté (parfois
+     # plusieurs milliers de tokens) — donc réglable plutôt qu'imposé.
+     "max_recherches_web": "3",
++    # Thinking adaptatif pour la rédaction (Sonnet uniquement) — désactivé
++    # par défaut. Voir le commentaire de _niveau_reflexion() dans
++    # agents/email_sender.py pour le pourquoi (comportement par défaut de
++    # l'API depuis Sonnet 5, coût invisible sinon).
++    "niveau_reflexion": "desactive",
+ }
+ 
+ 
+@@ -60,6 +65,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
+                 conn.execute("ALTER TABLE prospects ADD COLUMN champs_perso TEXT NOT NULL DEFAULT '{}'")
+             if "email_verifie" not in colonnes:
+                 conn.execute("ALTER TABLE prospects ADD COLUMN email_verifie TEXT")
++            if "telephone" not in colonnes:
++                conn.execute("ALTER TABLE prospects ADD COLUMN telephone TEXT")
+         if "interactions" in tables:
+             cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
+             if "gmail_thread_id" not in cols_int:
+@@ -121,7 +128,7 @@ def profil_actif(db_path: Path = DB_PATH) -> str:
+ 
+ CHAMPS_PROSPECT = {
+     "prenom", "nom", "poste", "entreprise", "secteur",
+-    "taille_entreprise", "linkedin_url", "email", "source", "notes", "profil",
++    "taille_entreprise", "linkedin_url", "telephone", "email", "source", "notes", "profil",
+ }
+ 
+ TRIS_AUTORISES = {
+@@ -602,6 +609,24 @@ def reparer_collision_champ_perso(nom_champ: str, profil: str, db_path: Path = D
+     return corriges
+ 
+ 
++def prospect_existe_par_email(email: str, profil: str, db_path: Path = DB_PATH) -> bool:
++    """Vérifie si un prospect du profil a déjà cette adresse email (comparaison
++    insensible à la casse et aux espaces) — sert au dédoublonnage à l'import
++    CSV : la contrainte UNIQUE ne porte que sur linkedin_url, donc un CSV
++    sans colonne LinkedIn ré-importé créait des doublons silencieux (même
++    personne emailée plusieurs fois dans un même lot)."""
++    email = (email or "").strip().lower()
++    if not email:
++        return False
++    with get_connection(db_path) as conn:
++        row = conn.execute(
++            "SELECT 1 FROM prospects WHERE profil = ? "
++            "AND LOWER(TRIM(email)) = ? LIMIT 1",
++            (profil, email),
++        ).fetchone()
++        return row is not None
++
++
+ def prospect_existe_par_champ_perso(cle: str, valeur: str, profil: str, db_path: Path = DB_PATH) -> bool:
+     """Vérifie si un prospect du profil a déjà cette valeur pour ce champ
+     personnalisé — sert à éviter les doublons à l'import HubSpot, qui n'a
+diff --git a/db/schema.sql b/db/schema.sql
+index 9d9babf..bfe4122 100644
+--- a/db/schema.sql
++++ b/db/schema.sql
+@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS prospects (
+     secteur             TEXT,
+     taille_entreprise   TEXT,
+     linkedin_url        TEXT UNIQUE,
++    telephone           TEXT,
+     getsales_lead_uuid  TEXT,
+     email               TEXT,
+ 

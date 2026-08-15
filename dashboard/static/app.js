@@ -279,6 +279,28 @@ function toutCocher(caseATout) {
   majCompteurSelection();
 }
 
+// ---------------------------------------------------------------- sélection (page Pipeline, qualification)
+
+function toutCocherPipeline(caseATout) {
+  document.querySelectorAll("#table-prospects .case-selection-pipeline:not(:disabled)").forEach((c) => {
+    if (c.closest("tr").style.display !== "none") c.checked = caseATout.checked;
+  });
+  majCompteurSelectionPipeline();
+}
+
+function majCompteurSelectionPipeline() {
+  const cochees = document.querySelectorAll("#table-prospects .case-selection-pipeline:checked").length;
+  document.getElementById("compteur-selection-pipeline").textContent = cochees;
+  document.getElementById("bouton-qualifier-selection").disabled = cochees === 0;
+}
+
+async function qualifierSelectionPipeline(bouton) {
+  const ids = Array.from(document.querySelectorAll("#table-prospects .case-selection-pipeline:checked"))
+    .map((c) => parseInt(c.value, 10));
+  if (!ids.length) return;
+  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton);
+}
+
 function majCompteurSelection() {
   const cochees = document.querySelectorAll("#table-selection .case-selection:checked").length;
   document.getElementById("compteur-selection").textContent = cochees;
@@ -342,7 +364,12 @@ function filtrerTable(champ) {
     const ok = !motif || tr.dataset.recherche.includes(motif);
     tr.style.display = ok ? "" : "none";
     if (ok) visibles++;
+    else {
+      const case_ = tr.querySelector(".case-selection-pipeline");
+      if (case_) case_.checked = false;
+    }
   });
+  majCompteurSelectionPipeline();
   const compteur = document.getElementById("compteur-visible");
   if (compteur) compteur.textContent = visibles;
 }

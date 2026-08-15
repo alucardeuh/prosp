@@ -24,6 +24,11 @@ REGLAGES_DEFAUT = {
     # $10/1000 recherches + le coût en tokens du contenu rapporté (parfois
     # plusieurs milliers de tokens) — donc réglable plutôt qu'imposé.
     "max_recherches_web": "3",
+    # Thinking adaptatif pour la rédaction (Sonnet uniquement) — désactivé
+    # par défaut. Voir le commentaire de _niveau_reflexion() dans
+    # agents/email_sender.py pour le pourquoi (comportement par défaut de
+    # l'API depuis Sonnet 5, coût invisible sinon).
+    "niveau_reflexion": "desactive",
 }
 
 
@@ -60,6 +65,8 @@ def init_db(db_path: Path = DB_PATH) -> None:
                 conn.execute("ALTER TABLE prospects ADD COLUMN champs_perso TEXT NOT NULL DEFAULT '{}'")
             if "email_verifie" not in colonnes:
                 conn.execute("ALTER TABLE prospects ADD COLUMN email_verifie TEXT")
+            if "telephone" not in colonnes:
+                conn.execute("ALTER TABLE prospects ADD COLUMN telephone TEXT")
         if "interactions" in tables:
             cols_int = {row[1] for row in conn.execute("PRAGMA table_info(interactions)").fetchall()}
             if "gmail_thread_id" not in cols_int:
@@ -121,7 +128,7 @@ def profil_actif(db_path: Path = DB_PATH) -> str:
 
 CHAMPS_PROSPECT = {
     "prenom", "nom", "poste", "entreprise", "secteur",
-    "taille_entreprise", "linkedin_url", "email", "source", "notes", "profil",
+    "taille_entreprise", "linkedin_url", "telephone", "email", "source", "notes", "profil",
 }
 
 TRIS_AUTORISES = {
@@ -600,6 +607,24 @@ def reparer_collision_champ_perso(nom_champ: str, profil: str, db_path: Path = D
                     (nouveau_json, row["id"]),
                 )
     return corriges
+
+
+def prospect_existe_par_email(email: str, profil: str, db_path: Path = DB_PATH) -> bool:
+    """Vérifie si un prospect du profil a déjà cette adresse email (comparaison
+    insensible à la casse et aux espaces) — sert au dédoublonnage à l'import
+    CSV : la contrainte UNIQUE ne porte que sur linkedin_url, donc un CSV
+    sans colonne LinkedIn ré-importé créait des doublons silencieux (même
+    personne emailée plusieurs fois dans un même lot)."""
+    email = (email or "").strip().lower()
+    if not email:
+        return False
+    with get_connection(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM prospects WHERE profil = ? "
+            "AND LOWER(TRIM(email)) = ? LIMIT 1",
+            (profil, email),
+        ).fetchone()
+        return row is not None
 
 
 def prospect_existe_par_champ_perso(cle: str, valeur: str, profil: str, db_path: Path = DB_PATH) -> bool:

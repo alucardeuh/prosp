@@ -40,6 +40,7 @@
                     </div>
                 </div>
                 <div><label>LinkedIn</label><input name="linkedin_url" value="{{ prospect.linkedin_url or '' }}"></div>
+                <div><label>Téléphone</label><input name="telephone" value="{{ prospect.telephone or '' }}"></div>
                 {% for c in champs_perso %}
                 <div><label>{{ c.libelle }}</label><input name="{{ c.nom }}" value="{{ valeurs_perso.get(c.nom, '') }}"></div>
                 {% endfor %}
