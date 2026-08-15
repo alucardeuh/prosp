@@ -25,16 +25,18 @@ sur le réseau.
   directement dans la liste. Boutons « Qualifier les nouveaux » et
   « Vérifier les réponses » : tout tourne en arrière-plan avec une barre de
   progression et un bouton **Annuler**, la page ne gèle plus jamais.
-- **Envoi** (`/envoi`) — organisée en deux zones claires :
-  - **Brouillons en attente** en haut : tout ce qui est prêt à relire/envoyer/programmer, peu importe comment ça a été créé (IA ou à la main) et peu importe le statut de qualification du prospect.
-  - **Composer un nouvel email** en dessous, avec deux façons clairement séparées :
-    - **Écrire moi-même** : choisis un prospect, pars d'un <strong>modèle enregistré</strong> ou d'une page blanche, ajuste, crée le brouillon — zéro token consommé, variables `{{prenom}}` / `{{nom}}` / `{{entreprise}}` / `{{poste}}` substituées automatiquement à l'aperçu ;
-    - **Générer avec l'IA** : tous les qualifiés sans brouillon en un clic, ou une **sélection sur mesure** (cases à cocher, filtrable par poste / statut / nombre d'envois déjà réalisés — peu importe le statut de qualification).
+- **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
+  libre) en haut, puis deux onglets cliquables : **Brouillons** (tout ce qui
+  est prêt à relire/envoyer/programmer, peu importe comment ça a été créé)
+  et **Sans brouillon** (les qualifiés à générer, un par un ou tous d'un
+  coup). Plus bas, une **sélection sur mesure** (cases à cocher, filtrable
+  par poste / statut / nombre d'envois déjà réalisés — peu importe le
+  statut de qualification).
 
-  Pour la génération IA : choisis le **niveau de recherche web** (désactivé
-  / simple / normal / approfondi) et ajoute un **contexte libre** propre à
-  ce lot précis (« recontacte les DAF suite à la nouvelle réglementation
-  X »), jamais mémorisé au-delà de cette génération.
+  Pour écrire un email à un prospect précis (à la main ou par l'IA) : passe
+  par sa **fiche** (`/prospect/N`) plutôt que par cette page — le choix
+  « Rédiger un mail vierge » ou « Générer par Claude » s'y trouve, et
+  redirige automatiquement vers Envoi une fois le brouillon prêt.
 - **Relances** (`/relances`) — prospects contactés depuis plus de N jours
   sans réponse, sans réponse entre-temps. Relances courtes (60-80 mots) qui
   arrivent dans le **même fil Gmail** que le premier email (pas un nouveau
@@ -46,8 +48,7 @@ sur le réseau.
   éditables sur chaque fiche.
 - **Modèles** (`/modeles`) — emails qui ont déjà bien marché (par profil).
   Claude s'en inspire pour le ton et la structure à chaque rédaction IA
-  (jamais recopiés mot pour mot), et ils servent de point de départ pour
-  écrire un email toi-même depuis Envoi.
+  (jamais recopiés mot pour mot).
 - **Stats** (`/stats`) — taux de réponse, taux de qualification, RDV,
   désinscrits, graphe des envois par semaine, et le détail des **tokens
   consommés** (entrée/sortie/recherches web, coût des recherches en $).

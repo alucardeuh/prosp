@@ -80,6 +80,13 @@
         <p><strong>{{ brouillon.objet }}</strong></p>
         <p style="white-space:pre-wrap; font-size:13.5px">{{ brouillon.corps }}</p>
         <p class="aide">À envoyer depuis la page {% if brouillon.type == 'relance' %}<a href="/relances">Relances</a>{% else %}<a href="/envoi">Envoi</a>{% endif %}.</p>
+        {% elif prospect.email and prospect.statut != 'desinscrit' %}
+        <h2 style="margin-top:26px">Rédiger un email</h2>
+        <p class="aide">Crée un brouillon pour ce prospect — tu le retrouveras ensuite dans Envoi.</p>
+        <div class="rangee-boutons" style="margin-top:10px">
+            <button onclick="rediger('{{ prospect.id }}', 'vierge', this)">Rédiger un mail vierge</button>
+            <button class="primaire" onclick="rediger('{{ prospect.id }}', 'claude', this)">Générer par Claude</button>
+        </div>
         {% endif %}
     </div>
 </div>
@@ -141,6 +148,21 @@ async function ajouterNote(e, id) {
   const r = await action("/api/prospects/" + id + "/note", { texte: note });
   if (r && r.ok) location.reload();
   return false;
+}
+async function rediger(id, mode, bouton) {
+  bouton.disabled = true;
+  if (mode === "vierge") {
+    const r = await action("/api/prospects/" + id + "/brouillon-manuel", { type: "initial" });
+    if (r && r.ok) { window.location.href = "/envoi"; return; }
+    bouton.disabled = false;
+    return;
+  }
+  // mode "claude" : lance la génération en tâche de fond, puis part tout de
+  // suite sur /envoi — cette page-là raccroche le bandeau de progression
+  // toute seule au chargement (même mécanisme que partout ailleurs).
+  const r = await action("/api/prospects/" + id + "/generer", { type: "initial" });
+  if (r && r.job_id) { window.location.href = "/envoi"; return; }
+  bouton.disabled = false;
 }
 </script>
 {% endblock %}

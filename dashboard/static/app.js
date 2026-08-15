@@ -241,38 +241,17 @@ async function regenererUn(prospectId, type, bouton) {
   await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton);
 }
 
-function chargerModeleCompose() {
-  const selModele = document.getElementById("compose-modele");
-  const selProspect = document.getElementById("compose-prospect");
-  const optModele = selModele.options[selModele.selectedIndex];
-  const optProspect = selProspect.options[selProspect.selectedIndex];
-  const vars = {
-    "{{prenom}}": (optProspect && optProspect.dataset.prenom) || "",
-    "{{nom}}": (optProspect && optProspect.dataset.nom) || "",
-    "{{entreprise}}": (optProspect && optProspect.dataset.entreprise) || "",
-    "{{poste}}": (optProspect && optProspect.dataset.poste) || "",
-  };
-  function substituer(texte) {
-    Object.keys(vars).forEach((cle) => { texte = texte.split(cle).join(vars[cle]); });
-    return texte;
-  }
-  document.getElementById("compose-objet").value = substituer(optModele.dataset.objet || "");
-  document.getElementById("compose-corps").value = substituer(optModele.dataset.corps || "");
-}
+// ---------------------------------------------------------------- onglets (page /envoi)
 
-async function creerBrouillonCompose(bouton) {
-  const prospectId = document.getElementById("compose-prospect").value;
-  if (!prospectId) { toast("Choisis un prospect d'abord.", "erreur"); return; }
-  const corps = document.getElementById("compose-corps").value.trim();
-  if (!corps) { toast("Le corps de l'email ne peut pas être vide.", "erreur"); return; }
-  const objet = document.getElementById("compose-objet").value.trim();
-  bouton.disabled = true;
-  const donnees = await action(
-    "/api/prospects/" + prospectId + "/brouillon-manuel",
-    { type: "initial", objet: objet, corps: corps },
-    { recharger: true, delai: 400 }
-  );
-  if (!donnees) bouton.disabled = false;
+function basculerOngletEnvoi(nom) {
+  const avec = document.getElementById("onglet-avec");
+  const sans = document.getElementById("onglet-sans");
+  const btnAvec = document.getElementById("onglet-avec-btn");
+  const btnSans = document.getElementById("onglet-sans-btn");
+  if (avec) avec.style.display = nom === "avec" ? "block" : "none";
+  if (sans) sans.style.display = nom === "sans" ? "block" : "none";
+  if (btnAvec) btnAvec.classList.toggle("actif", nom === "avec");
+  if (btnSans) btnSans.classList.toggle("actif", nom === "sans");
 }
 
 // ---------------------------------------------------------------- sélection sur mesure (page /envoi)
