@@ -25,19 +25,16 @@ sur le réseau.
   directement dans la liste. Boutons « Qualifier les nouveaux » et
   « Vérifier les réponses » : tout tourne en arrière-plan avec une barre de
   progression et un bouton **Annuler**, la page ne gèle plus jamais.
-- **Envoi** (`/envoi`) — deux façons de composer un lot :
-  - automatique : génère tous les qualifiés sans brouillon en un clic
-    (plafonné au quota du jour) ;
-  - **sur mesure** : sélectionne exactement qui contacter (cases à cocher),
-    filtrable par poste / statut / nombre d'envois déjà réalisés — peu
-    importe le statut de qualification.
+- **Envoi** (`/envoi`) — organisée en deux zones claires :
+  - **Brouillons en attente** en haut : tout ce qui est prêt à relire/envoyer/programmer, peu importe comment ça a été créé (IA ou à la main) et peu importe le statut de qualification du prospect.
+  - **Composer un nouvel email** en dessous, avec deux façons clairement séparées :
+    - **Écrire moi-même** : choisis un prospect, pars d'un <strong>modèle enregistré</strong> ou d'une page blanche, ajuste, crée le brouillon — zéro token consommé, variables `{{prenom}}` / `{{nom}}` / `{{entreprise}}` / `{{poste}}` substituées automatiquement à l'aperçu ;
+    - **Générer avec l'IA** : tous les qualifiés sans brouillon en un clic, ou une **sélection sur mesure** (cases à cocher, filtrable par poste / statut / nombre d'envois déjà réalisés — peu importe le statut de qualification).
 
-  Avant de lancer un lot : choisis le **niveau de recherche web**
-  (désactivé / simple / normal / approfondi) et ajoute un **contexte libre**
-  propre à ce lot précis (« recontacte les DAF suite à la nouvelle
-  réglementation X »), jamais mémorisé au-delà de cette génération. Chaque
-  email est ensuite **éditable** (objet + corps) avant envoi, avec les
-  tokens consommés affichés sur la carte.
+  Pour la génération IA : choisis le **niveau de recherche web** (désactivé
+  / simple / normal / approfondi) et ajoute un **contexte libre** propre à
+  ce lot précis (« recontacte les DAF suite à la nouvelle réglementation
+  X »), jamais mémorisé au-delà de cette génération.
 - **Relances** (`/relances`) — prospects contactés depuis plus de N jours
   sans réponse, sans réponse entre-temps. Relances courtes (60-80 mots) qui
   arrivent dans le **même fil Gmail** que le premier email (pas un nouveau
@@ -47,13 +44,18 @@ sur le réseau.
   ajoute ou retire des variables propres à un profil (ex. « Budget estimé »)
   en plus des champs de base — reconnues automatiquement dans un CSV,
   éditables sur chaque fiche.
+- **Modèles** (`/modeles`) — emails qui ont déjà bien marché (par profil).
+  Claude s'en inspire pour le ton et la structure à chaque rédaction IA
+  (jamais recopiés mot pour mot), et ils servent de point de départ pour
+  écrire un email toi-même depuis Envoi.
 - **Stats** (`/stats`) — taux de réponse, taux de qualification, RDV,
   désinscrits, graphe des envois par semaine, et le détail des **tokens
   consommés** (entrée/sortie/recherches web, coût des recherches en $).
-- **Paramètres** (`/parametres`) — en tête de page, les **connexions**
-  (Gmail, HubSpot) pilotables entièrement depuis le navigateur ; puis ICP,
-  ton des emails, limites d'envoi, délai/nombre de relances, création de
-  profils.
+- **Paramètres** (`/parametres`) — en tête de page, la **clé API Anthropic**
+  et les modèles Claude utilisés, puis les **connexions** (Gmail, HubSpot,
+  propres à chaque profil) pilotables entièrement depuis le navigateur ;
+  puis ICP, ton des emails, limites d'envoi, délai/nombre de relances,
+  création de profils.
 - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
   éditables, notes de suivi horodatées, historique complet avec tokens
   consommés par action, suppression.

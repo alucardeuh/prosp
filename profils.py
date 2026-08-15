@@ -124,6 +124,7 @@ def creer_profil(nom: str) -> str:
     _ecrire_yaml(dossier / "icp.yaml", ICP_VIERGE)
     _ecrire_yaml(dossier / "email_brief.yaml", BRIEF_VIERGE)
     _ecrire_yaml(dossier / "champs.yaml", {"champs": []})
+    _ecrire_yaml(dossier / "modeles.yaml", {"modeles": []})
     return identifiant
 
 
@@ -137,6 +138,10 @@ def chemin_brief(profil: str) -> Path:
 
 def chemin_champs(profil: str) -> Path:
     return PROFILS_DIR / profil / "champs.yaml"
+
+
+def chemin_modeles(profil: str) -> Path:
+    return PROFILS_DIR / profil / "modeles.yaml"
 
 
 def load_icp(profil: str) -> dict:
@@ -166,6 +171,39 @@ def load_champs(profil: str) -> list[dict]:
 
 def save_champs(profil: str, champs: list[dict]) -> None:
     _ecrire_yaml(chemin_champs(profil), {"champs": champs})
+
+
+def load_modeles(profil: str) -> list[dict]:
+    """Emails-types de ce profil : [{titre, objet, corps}, ...] — utilisés
+    comme exemples concrets ('few-shot') dans le prompt de rédaction, pour
+    que Claude s'inspire d'un ton et d'une structure qui ont déjà fait leurs
+    preuves plutôt que de partir uniquement d'instructions abstraites.
+    Fichier créé vide au besoin (profils créés avant cette fonctionnalité)."""
+    chemin = chemin_modeles(profil)
+    if not chemin.exists():
+        _ecrire_yaml(chemin, {"modeles": []})
+    with open(chemin, encoding="utf-8") as f:
+        contenu = yaml.safe_load(f) or {}
+    return contenu.get("modeles", [])
+
+
+def save_modeles(profil: str, modeles: list[dict]) -> None:
+    _ecrire_yaml(chemin_modeles(profil), {"modeles": modeles})
+
+
+def ajouter_modele(profil: str, titre: str, objet: str, corps: str) -> None:
+    if not titre.strip() or not corps.strip():
+        raise ValueError("Le titre et le corps du modèle sont obligatoires.")
+    modeles = load_modeles(profil)
+    modeles.append({"titre": titre.strip(), "objet": objet.strip(), "corps": corps.strip()})
+    save_modeles(profil, modeles)
+
+
+def supprimer_modele(profil: str, index: int) -> None:
+    modeles = load_modeles(profil)
+    if 0 <= index < len(modeles):
+        modeles.pop(index)
+        save_modeles(profil, modeles)
 
 
 def _identifiant_sur(texte: str) -> str:

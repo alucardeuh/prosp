@@ -241,6 +241,40 @@ async function regenererUn(prospectId, type, bouton) {
   await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton);
 }
 
+function chargerModeleCompose() {
+  const selModele = document.getElementById("compose-modele");
+  const selProspect = document.getElementById("compose-prospect");
+  const optModele = selModele.options[selModele.selectedIndex];
+  const optProspect = selProspect.options[selProspect.selectedIndex];
+  const vars = {
+    "{{prenom}}": (optProspect && optProspect.dataset.prenom) || "",
+    "{{nom}}": (optProspect && optProspect.dataset.nom) || "",
+    "{{entreprise}}": (optProspect && optProspect.dataset.entreprise) || "",
+    "{{poste}}": (optProspect && optProspect.dataset.poste) || "",
+  };
+  function substituer(texte) {
+    Object.keys(vars).forEach((cle) => { texte = texte.split(cle).join(vars[cle]); });
+    return texte;
+  }
+  document.getElementById("compose-objet").value = substituer(optModele.dataset.objet || "");
+  document.getElementById("compose-corps").value = substituer(optModele.dataset.corps || "");
+}
+
+async function creerBrouillonCompose(bouton) {
+  const prospectId = document.getElementById("compose-prospect").value;
+  if (!prospectId) { toast("Choisis un prospect d'abord.", "erreur"); return; }
+  const corps = document.getElementById("compose-corps").value.trim();
+  if (!corps) { toast("Le corps de l'email ne peut pas être vide.", "erreur"); return; }
+  const objet = document.getElementById("compose-objet").value.trim();
+  bouton.disabled = true;
+  const donnees = await action(
+    "/api/prospects/" + prospectId + "/brouillon-manuel",
+    { type: "initial", objet: objet, corps: corps },
+    { recharger: true, delai: 400 }
+  );
+  if (!donnees) bouton.disabled = false;
+}
+
 // ---------------------------------------------------------------- sélection sur mesure (page /envoi)
 
 function toutCocher(caseATout) {

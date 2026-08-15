@@ -241,13 +241,23 @@ def detail(prospect_id: int):
 @app.route("/envoi")
 def envoi():
     profil = db.profil_actif()
-    prospects = [p for p in db.list_prospects(statut="qualifie", profil=profil, tri="score_qualification", ordre="desc")
-                 if p.get("email")]
     brouillons = db.list_brouillons()
-    for p in prospects:
-        p["brouillon"] = brouillons.get(p["id"])
-    avec = [p for p in prospects if p["brouillon"]]
-    sans = [p for p in prospects if not p["brouillon"]]
+
+    # Brouillons déjà créés : n'importe quel statut de qualification (écrire
+    # à la main, via le composeur, n'exige pas d'être "qualifie" — seule la
+    # génération IA en masse ci-dessous reste liée aux qualifiés). Scopé au
+    # profil actif : list_brouillons() n'est pas filtrée par profil elle-même.
+    avec = []
+    for prospect_id, brouillon in brouillons.items():
+        p = db.get_prospect(prospect_id)
+        if p and p.get("profil") == profil and p.get("email"):
+            p["brouillon"] = brouillon
+            avec.append(p)
+    avec.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+    ids_avec_brouillon = {p["id"] for p in avec}
+
+    sans = [p for p in db.list_prospects(statut="qualifie", profil=profil, tri="score_qualification", ordre="desc")
+            if p.get("email") and p["id"] not in ids_avec_brouillon]
 
     selection = db.list_prospects_pour_selection(profil)
     postes = sorted({p["poste"] for p in selection if p.get("poste")})
@@ -255,7 +265,8 @@ def envoi():
     return render_template("envoi.html", avec_brouillon=avec, sans_brouillon=sans,
                            quota_restant=_quota_restant(), actif="envoi",
                            selection=selection, postes=postes, statuts=STATUTS,
-                           niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()))
+                           niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
+                           modeles=profils.load_modeles(profil))
 
 
 @app.route("/relances")
@@ -517,6 +528,61 @@ def api_envoyer(prospect_id: int):
     return jsonify({"ok": True,
                     "message": f"Email envoyé à {prospect['prenom']} {prospect['nom']}.",
                     "quota_restant": _quota_restant()})
+
+
+def _substituer_variables(texte: str, prospect: dict) -> str:
+    """Remplace les variables {{prenom}}/{{nom}}/{{entreprise}}/{{poste}}
+    d'un modèle par les vraies valeurs du prospect — le seul 'moteur' de
+    personnalisation en rédaction manuelle, volontairement simple (pas
+    d'IA, donc pas de tokens consommés)."""
+    remplacements = {
+        "{{prenom}}": prospect.get("prenom") or "",
+        "{{nom}}": prospect.get("nom") or "",
+        "{{entreprise}}": prospect.get("entreprise") or "",
+        "{{poste}}": prospect.get("poste") or "",
+    }
+    for cle, valeur in remplacements.items():
+        texte = texte.replace(cle, valeur)
+    return texte
+
+
+@app.route("/api/prospects/<int:prospect_id>/brouillon-manuel", methods=["POST"])
+def api_brouillon_manuel(prospect_id: int):
+    """Crée un brouillon SANS appeler Claude — vierge, pré-rempli à partir
+    d'un modèle d'email enregistré (variables substituées côté serveur), ou
+    avec un objet/corps déjà prêts (le composeur d'/envoi fait la
+    substitution côté client pour un aperçu immédiat, et envoie le résultat
+    tel quel — modifiable avant l'envoi dans les deux cas).
+    Zéro token consommé : tokens_entree/tokens_sortie restent à 0 par défaut."""
+    prospect = db.get_prospect(prospect_id)
+    if not prospect:
+        return jsonify({"erreur": "Prospect introuvable."}), 404
+    if prospect["statut"] == "desinscrit":
+        return jsonify({"erreur": "Ce prospect s'est désinscrit."}), 400
+
+    donnees = request.get_json(silent=True) or {}
+    type_ = donnees.get("type", "initial")
+    modele_index = donnees.get("modele_index")
+    objet_fourni = donnees.get("objet")
+    corps_fourni = donnees.get("corps")
+
+    if objet_fourni is not None or corps_fourni is not None:
+        objet = (objet_fourni or "").strip()
+        corps = (corps_fourni or "").strip()
+    elif modele_index is not None and modele_index != "":
+        profil = prospect.get("profil") or db.profil_actif()
+        modeles = profils.load_modeles(profil)
+        try:
+            modele = modeles[int(modele_index)]
+        except (ValueError, IndexError):
+            return jsonify({"erreur": "Modèle introuvable."}), 404
+        objet = _substituer_variables(modele.get("objet", ""), prospect)
+        corps = _substituer_variables(modele.get("corps", ""), prospect)
+    else:
+        objet, corps = "", ""
+
+    db.set_brouillon(prospect_id, objet, corps, type_=type_)
+    return jsonify({"ok": True, "message": "Brouillon créé — modifie-le puis envoie quand tu es prêt."})
 
 
 @app.route("/api/prospects/<int:prospect_id>/brouillon", methods=["POST"])
@@ -926,6 +992,38 @@ def ajouter_champ_perso():
     except ValueError as exc:
         flash(str(exc), "erreur")
     return redirect(url_for("ajouter"))
+
+
+@app.route("/modeles")
+def modeles_page():
+    profil = db.profil_actif()
+    return render_template("modeles.html", modeles=profils.load_modeles(profil), actif="modeles")
+
+
+@app.route("/modeles/ajouter", methods=["POST"])
+def ajouter_modele_email():
+    profil = db.profil_actif()
+    titre = request.form.get("titre", "")
+    objet = request.form.get("objet", "")
+    corps = request.form.get("corps", "")
+    try:
+        profils.ajouter_modele(profil, titre, objet, corps)
+        flash(f"Modèle « {titre} » ajouté.", "succes")
+    except ValueError as exc:
+        flash(str(exc), "erreur")
+    return redirect(url_for("modeles_page"))
+
+
+@app.route("/modeles/supprimer", methods=["POST"])
+def supprimer_modele_email():
+    profil = db.profil_actif()
+    try:
+        index = int(request.form.get("index", -1))
+    except ValueError:
+        index = -1
+    profils.supprimer_modele(profil, index)
+    flash("Modèle supprimé.", "succes")
+    return redirect(url_for("modeles_page"))
 
 
 @app.route("/ajouter/champs/supprimer", methods=["POST"])

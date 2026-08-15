@@ -169,6 +169,12 @@ h1 { font-family: var(--display); font-size: 24px; font-weight: 700; letter-spac
 h2 { font-family: var(--display); font-size: 15px; font-weight: 600; margin: 30px 0 12px; }
 .sous-titre { color: var(--dim); font-size: 13.5px; margin: 0 0 22px; }
 .entete-page { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+.titre-section {
+  font-family: var(--display); font-size: 15px; font-weight: 700;
+  color: var(--dim); text-transform: uppercase; letter-spacing: 0.05em;
+  margin: 34px 0 12px; padding-top: 20px; border-top: 1px solid var(--line);
+}
+.titre-section:first-of-type { margin-top: 22px; }
 
 /* ---------------- pipeline segmenté (signature du dashboard) ---------------- */
 .pipeline { margin: 18px 0 26px; }
@@ -255,12 +261,26 @@ input:focus, textarea:focus, select.champ:focus { border-color: var(--pine); out
 .table-englobe { background: var(--card); border: 1px solid var(--line); border-radius: var(--r); overflow: auto; box-shadow: var(--shadow); }
 
 .filtres-selection { display: flex; gap: 10px; margin: 14px 0; flex-wrap: wrap; }
+.cellule-manuelle { display: flex; gap: 6px; align-items: center; }
+.cellule-manuelle select { font-size: 12.5px; padding: 4px 6px; max-width: 160px; }
+.cellule-manuelle button { font-size: 12.5px; padding: 4px 10px; }
 .filtres-selection input, .filtres-selection select { flex: 1; min-width: 160px; }
 #table-selection tbody tr { cursor: default; }
 #table-selection td:first-child, #table-selection th:first-child { width: 34px; text-align: center; }
 #table-selection input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; }
 
 .liste-champs-perso { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+
+.grille-modeles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin-top: 10px; }
+.carte-modele { background: var(--paper); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+.tete-modele { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+.tete-modele h3 { font-family: var(--display); font-size: 14.5px; margin: 0; }
+.tete-modele button { padding: 3px 10px; font-size: 11.5px; flex-shrink: 0; }
+.objet-modele { font-weight: 600; font-size: 13px; margin: 0 0 6px; }
+.corps-modele {
+  font-size: 12.5px; color: var(--dim); white-space: pre-wrap; margin: 0;
+  max-height: 140px; overflow-y: auto; line-height: 1.5;
+}
 .champ-perso-ligne {
   display: flex; align-items: center; justify-content: space-between;
   background: var(--paper); border: 1px solid var(--line); border-radius: 8px;

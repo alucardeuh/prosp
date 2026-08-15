@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Modèles{% endblock %}
+{% block content %}
+<div class="entete-page">
+    <div>
+        <h1>Modèles d'email</h1>
+        <div class="sous-titre">
+            Colle ici des emails qui ont déjà bien marché — profil actif uniquement.
+            Ils servent à deux choses : Claude s'en inspire pour le ton et la
+            structure à chaque rédaction par IA (jamais recopiés mot pour mot),
+            et tu peux directement en repartir pour écrire un email toi-même
+            sans passer par l'IA, depuis <a href="/envoi">Envoi</a>.
+        </div>
+    </div>
+</div>
+
+<div class="carte">
+    <h2>Tes modèles ({{ modeles|length }})</h2>
+    {% if modeles %}
+    <div class="grille-modeles">
+        {% for m in modeles %}
+        <div class="carte-modele">
+            <div class="tete-modele">
+                <h3>{{ m.titre }}</h3>
+                <form method="post" action="/modeles/supprimer" style="display:inline">
+                    <input type="hidden" name="index" value="{{ loop.index0 }}">
+                    <button type="submit" class="danger" onclick="return confirm('Supprimer ce modèle ?')">Retirer</button>
+                </form>
+            </div>
+            <p class="objet-modele">{{ m.objet or '(pas d\'objet)' }}</p>
+            <p class="corps-modele">{{ m.corps }}</p>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="vide">
+        Aucun modèle pour l'instant. Ajoute le premier ci-dessous — un email
+        que tu as déjà envoyé et qui a bien marché est le meilleur point de départ.
+    </div>
+    {% endif %}
+</div>
+
+<div class="carte">
+    <h2>Ajouter un modèle</h2>
+    <form method="post" action="/modeles/ajouter">
+        <label for="modele_titre">Titre (juste pour t'y retrouver)</label>
+        <input type="text" id="modele_titre" name="titre" placeholder="Ex : Relance après salon" required>
+
+        <label for="modele_objet">Objet</label>
+        <input type="text" id="modele_objet" name="objet" placeholder="Ex : Question rapide sur {{ '{{entreprise}}' }}">
+
+        <label for="modele_corps">Corps</label>
+        <textarea id="modele_corps" name="corps" rows="8" required placeholder="Bonjour {{ '{{prenom}}' }}, ..."></textarea>
+        <p class="aide">
+            Variables reconnues pour l'écriture manuelle (l'IA personnalise
+            déjà par elle-même, ces variables ne la concernent pas) :
+            <span class="mono">{{ '{{prenom}}' }}</span>, <span class="mono">{{ '{{nom}}' }}</span>,
+            <span class="mono">{{ '{{entreprise}}' }}</span>, <span class="mono">{{ '{{poste}}' }}</span>.
+        </p>
+        <div class="rangee-boutons" style="margin-top:10px">
+            <button type="submit" class="primaire">Ajouter le modèle</button>
+        </div>
+    </form>
+</div>
+{% endblock %}

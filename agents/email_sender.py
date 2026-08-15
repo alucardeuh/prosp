@@ -154,12 +154,12 @@ soudaine après un paragraphe formel)."""
 
 
 def build_system_email(icp: dict, brief: dict, avec_recherche: bool = True,
-                       contexte_batch: str = "") -> list[dict]:
+                       contexte_batch: str = "", modeles: list[dict] | None = None) -> list[dict]:
     """2 points de cache :
-    - bloc profil (produit, ton, règles d'écriture, signature) : identique
-      pour TOUT email initial de ce profil, quel que soit le lot — reste en
-      cache à travers plusieurs lots tant qu'ils s'enchaînent dans les 5
-      minutes (ou 1h si un jour on active le cache longue durée).
+    - bloc profil (produit, ton, règles d'écriture, signature, exemples) :
+      identique pour TOUT email initial de ce profil, quel que soit le lot —
+      reste en cache à travers plusieurs lots tant qu'ils s'enchaînent dans
+      les 5 minutes (ou 1h si un jour on active le cache longue durée).
     - bloc lot (recherche on/off, contexte de ce lot précis) : change d'un
       lot à l'autre, mais identique pour tous les prospects D'UN MÊME
       lot — cacheable entre les prospects de CE lot.
@@ -183,6 +183,22 @@ Structure : {brief.get('structure_attendue', '')}
 # Obligatoire à la fin de chaque email
 {brief.get('signature', '')}
 {brief.get('mention_obligatoire', '')}"""
+
+    if modeles:
+        blocs_exemples = "\n\n".join(
+            f"Exemple {i+1}{' — ' + m['titre'] if m.get('titre') else ''}\n"
+            f"Objet : {m.get('objet', '')}\n{m.get('corps', '')}"
+            for i, m in enumerate(modeles)
+        )
+        bloc_profil += f"""
+
+# Exemples d'emails qui ont déjà bien fonctionné
+Inspire-toi de leur ton, de leur structure et de leur niveau de
+personnalisation pour rédiger CET email — ce sont des repères de style,
+jamais un texte à recopier tel quel : chaque email doit rester unique et
+vraiment écrit pour CE prospect précis.
+
+{blocs_exemples}"""
 
     if avec_recherche:
         bloc_lot = """# Étape 1 — recherche (obligatoire avant de rédiger)
@@ -327,7 +343,9 @@ def redact_email(prospect: dict, icp: dict, brief: dict, client=None,
     est un texte libre propre à CE lot d'envoi, jamais persisté ailleurs que
     dans le prompt de cette génération précise. Retourne ({objet, corps}, usage)."""
     max_recherches = _max_recherches_web(niveau_recherche)
-    system = build_system_email(icp, brief, avec_recherche=max_recherches > 0, contexte_batch=contexte_batch)
+    modeles = profils.load_modeles(prospect.get("profil") or db.profil_actif())
+    system = build_system_email(icp, brief, avec_recherche=max_recherches > 0,
+                                contexte_batch=contexte_batch, modeles=modeles)
     return _appeler_redaction(system, build_prompt(prospect), client, max_recherches=max_recherches)
 
 
