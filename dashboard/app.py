@@ -89,12 +89,12 @@ from integrations import gmail_client, hubspot_client  # noqa: E402
 app = Flask(__name__)
 app.secret_key = "prospection-locale"  # app locale mono-utilisateur
 
-STATUTS = ["nouveau", "qualifie", "disqualifie", "contacte", "repondu", "rdv", "perdu", "desinscrit"]
+STATUTS = ["nouveau", "qualifie", "disqualifie", "contacte", "repondu", "rdv", "perdu", "rebond", "desinscrit"]
 
 LIBELLES_STATUT = {
     "nouveau": "Nouveau", "qualifie": "Qualifié", "disqualifie": "Disqualifié",
     "contacte": "Contacté", "repondu": "A répondu", "rdv": "RDV",
-    "perdu": "Perdu", "desinscrit": "Désinscrit",
+    "perdu": "Perdu", "rebond": "Rebond (email invalide)", "desinscrit": "Désinscrit",
 }
 
 # Initialisation UNE SEULE FOIS au démarrage du process (import de ce module),

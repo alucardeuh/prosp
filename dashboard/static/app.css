@@ -238,6 +238,7 @@ h2 { font-family: var(--display); font-size: 15px; font-weight: 600; margin: 30p
 .c-repondu     { background: #1d8a63; }
 .c-rdv         { background: var(--pine-deep); }
 .c-perdu       { background: #c98a80; }
+.c-rebond      { background: var(--amber); }
 .c-desinscrit  { background: var(--brick); }
 
 /* ---------------- cartes & grilles ---------------- */

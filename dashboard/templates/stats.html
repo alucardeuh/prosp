@@ -34,6 +34,10 @@
         <div class="legende">rendez-vous obtenus</div>
     </div>
     <div class="tuile">
+        <div class="valeur">{{ g.rebonds }}{% if g.taux_rebond is not none %} <span class="silencieux" style="font-size:14px">({{ g.taux_rebond }}%)</span>{% endif %}</div>
+        <div class="legende">rebonds (adresses invalides)</div>
+    </div>
+    <div class="tuile">
         <div class="valeur">{{ g.desinscrits }}</div>
         <div class="legende">désinscrits</div>
     </div>

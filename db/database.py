@@ -53,7 +53,25 @@ def init_db(db_path: Path = DB_PATH) -> None:
         conn.execute("PRAGMA synchronous=NORMAL")
         tables = {row[0] for row in conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+
+        # SQLite ne sait pas modifier une contrainte CHECK existante avec un
+        # simple ALTER TABLE — il faut recréer la table pour ajouter le
+        # statut "rebond". Toutes les données sont conservées : renomme
+        # l'ancienne table, laisse schema.sql (plus bas) recréer "prospects"
+        # avec la contrainte à jour (et toutes les colonnes actuelles), puis
+        # recopie les lignes existantes dedans.
+        migration_statut_colonnes = None
         if "prospects" in tables:
+            definition_actuelle = conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='prospects'"
+            ).fetchone()
+            if definition_actuelle and "'rebond'" not in (definition_actuelle[0] or ""):
+                migration_statut_colonnes = [
+                    row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()
+                ]
+                conn.execute("ALTER TABLE prospects RENAME TO prospects_migration_statut")
+
+        if "prospects" in tables and migration_statut_colonnes is None:
             colonnes = {row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()}
             if "getsales_lead_uuid" not in colonnes:
                 conn.execute("ALTER TABLE prospects ADD COLUMN getsales_lead_uuid TEXT")
@@ -86,6 +104,19 @@ def init_db(db_path: Path = DB_PATH) -> None:
             if "mis_de_cote" not in cols_br:
                 conn.execute("ALTER TABLE brouillons ADD COLUMN mis_de_cote INTEGER NOT NULL DEFAULT 0")
         conn.executescript(SCHEMA_PATH.read_text())
+
+        if migration_statut_colonnes:
+            # schema.sql vient de recréer "prospects" avec la contrainte à
+            # jour et toutes les colonnes actuelles (y compris celles plus
+            # récentes que l'ancienne table, qui prendront leur valeur par
+            # défaut). Ne recopie que les colonnes qui existaient déjà.
+            colonnes_communes = ", ".join(migration_statut_colonnes)
+            conn.execute(
+                f"INSERT INTO prospects ({colonnes_communes}) "
+                f"SELECT {colonnes_communes} FROM prospects_migration_statut"
+            )
+            conn.execute("DROP TABLE prospects_migration_statut")
+
         for cle, valeur in REGLAGES_DEFAUT.items():
             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
         conn.commit()
@@ -598,12 +629,17 @@ def stats_envois_par_semaine(nb_semaines: int = 8, db_path: Path = DB_PATH) -> l
 
 
 def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
-    """Chiffres clés du profil : contactés, réponses, taux, désinscriptions..."""
+    """Chiffres clés du profil : contactés, réponses, taux, désinscriptions...
+    Un rebond compte comme "contacté" (l'email est bien parti) mais jamais
+    comme une réponse — l'exclure des contactés aurait artificiellement
+    gonflé le taux de réponse."""
     counts = counts_par_statut(profil=profil, db_path=db_path)
-    contactes_cumules = sum(counts.get(s, 0) for s in ("contacte", "repondu", "rdv", "perdu", "desinscrit"))
+    contactes_cumules = sum(counts.get(s, 0) for s in
+                            ("contacte", "repondu", "rdv", "perdu", "rebond", "desinscrit"))
     reponses = sum(counts.get(s, 0) for s in ("repondu", "rdv"))
     qualifies_cumules = contactes_cumules + counts.get("qualifie", 0)
     evalues = qualifies_cumules + counts.get("disqualifie", 0)
+    rebonds = counts.get("rebond", 0)
     return {
         "total": sum(counts.values()),
         "counts": counts,
@@ -613,6 +649,8 @@ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
         "taux_qualification": round(100 * qualifies_cumules / evalues) if evalues else None,
         "rdv": counts.get("rdv", 0),
         "desinscrits": counts.get("desinscrit", 0),
+        "rebonds": rebonds,
+        "taux_rebond": round(100 * rebonds / contactes_cumules) if contactes_cumules else None,
     }
 
 

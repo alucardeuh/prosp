@@ -39,9 +39,6 @@ from integrations import gmail_client  # noqa: E402
 # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
 # Même raisonnement que agents/qualification.py : classer une réponse
 # (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
-# rédaction — Haiku suffit, moitié prix. Surchargeable via CLAUDE_MODEL_RAPIDE.
-# Même raisonnement que agents/qualification.py : classer une réponse
-# (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
 # rédaction — Haiku suffit, moitié prix. Lu à chaque appel pour qu'un
 # changement depuis Paramètres prenne effet sans redémarrage.
 # Surchargeable via CLAUDE_MODEL_RAPIDE.
@@ -49,6 +46,24 @@ def _modele() -> str:
     return os.environ.get("CLAUDE_MODEL_RAPIDE", "claude-haiku-4-5-20251001")
 
 TAILLE_LOT_GMAIL = 20  # adresses par requête Gmail groupée
+
+# Détection heuristique des messages de rebond (non-livraison) — gratuite,
+# sans appel API, pour un motif aussi reconnaissable qu'un mailer-daemon.
+# La classification IA (catégorie "rebond" du TOOL_CLASSIFICATION plus bas)
+# reste le filet de sécurité pour les formats moins standards qu'elle
+# pourrait rater.
+PATRON_REBOND = re.compile(
+    r"mailer-daemon|postmaster|mail delivery (subsystem|failed)|"
+    r"delivery status notification|undelivered mail|delivery failure|"
+    r"non[- ]distribu|message non remis|returned to sender|failure notice",
+    re.IGNORECASE,
+)
+
+
+def _ressemble_a_un_rebond(email: dict) -> bool:
+    expediteur = (email.get("de") or "")
+    sujet = (email.get("sujet") or "")
+    return bool(PATRON_REBOND.search(expediteur) or PATRON_REBOND.search(sujet))
 
 TOOL_CLASSIFICATION = {
     "name": "classifier_email",
@@ -60,13 +75,16 @@ TOOL_CLASSIFICATION = {
                 "type": "string",
                 "enum": [
                     "interesse", "pas_interesse", "a_relancer",
-                    "desinscription", "absence_bureau", "autre",
+                    "desinscription", "absence_bureau", "rebond", "autre",
                 ],
                 "description": (
                     "interesse: veut avancer / en savoir plus. pas_interesse: refus "
                     "clair. a_relancer: demande de recontacter plus tard. "
                     "desinscription: demande explicite d'arrêt de contact. "
                     "absence_bureau: réponse automatique (vacances, hors bureau). "
+                    "rebond: message de non-livraison automatique (l'adresse n'existe "
+                    "plus, boîte pleine, domaine introuvable...) — PAS une vraie réponse "
+                    "humaine, même si le texte contient des formulations polies. "
                     "autre: ne rentre dans aucune case ci-dessus."
                 ),
             },
@@ -87,6 +105,7 @@ CATEGORIE_VERS_STATUT = {
     "interesse": "repondu",
     "pas_interesse": "perdu",
     "desinscription": "desinscrit",
+    "rebond": "rebond",
 }
 
 
@@ -197,12 +216,30 @@ def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
 
 def traiter_email(prospect: dict, email: dict, dry_run: bool = False, client=None) -> dict:
     """Classe UN email et écrit le résultat en base. Brique utilisée par
-    run() (CLI) et par le job du dashboard."""
-    resultat, usage = _fake_classification() if dry_run else classify_email(prospect, email, client)
+    run() (CLI) et par le job du dashboard.
+
+    Un rebond détecté heuristiquement (expéditeur/sujet caractéristique
+    d'un mailer-daemon) court-circuite l'appel API : aucun doute possible,
+    inutile de payer un classement IA pour ça."""
+    if not dry_run and _ressemble_a_un_rebond(email):
+        resultat = {
+            "categorie": "rebond",
+            "raison": "Expéditeur ou sujet caractéristique d'un message de non-livraison (mailer-daemon...).",
+            "action_recommandee": "Vérifier/corriger l'adresse email de ce prospect avant tout nouvel envoi.",
+        }
+        usage = {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
+    else:
+        resultat, usage = _fake_classification() if dry_run else classify_email(prospect, email, client)
 
     nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
     if nouveau_statut:
         db.update_statut(prospect["id"], nouveau_statut)
+    if resultat["categorie"] == "rebond":
+        # Bloque aussi un envoi manuel direct depuis la fiche ou une
+        # sélection sur mesure — pas seulement la relance automatique, qui
+        # de toute façon n'est plus déclenchée pour ce prospect (elle exige
+        # statut = 'contacte', déjà changé en 'rebond' ci-dessus).
+        db.set_email_verifie(prospect["id"], "invalide")
 
     db.add_interaction(
         prospect["id"], "email_recu",

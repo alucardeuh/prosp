@@ -16,12 +16,12 @@ CREATE TABLE IF NOT EXISTS prospects (
 
     -- Cycle de vie du prospect. C'est CE champ que le manager regarde
     -- pour décider quel agent doit agir ensuite.
-    -- nouveau -> qualifie / disqualifie -> contacte -> repondu -> rdv / perdu
+    -- nouveau -> qualifie / disqualifie -> contacte -> repondu -> rdv / perdu / rebond
     -- desinscrit peut arriver à tout moment et doit tout bloquer.
     statut              TEXT NOT NULL DEFAULT 'nouveau'
                          CHECK (statut IN (
                              'nouveau', 'qualifie', 'disqualifie',
-                             'contacte', 'repondu', 'rdv', 'perdu', 'desinscrit'
+                             'contacte', 'repondu', 'rdv', 'perdu', 'rebond', 'desinscrit'
                          )),
 
     score_qualification INTEGER,

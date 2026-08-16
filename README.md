@@ -157,6 +157,12 @@ volontaire.
   test, ou boucle accidentelle) ne sont jamais confondues avec une vraie
   réponse de prospect.
 - **Max relances** : 2 par prospect par défaut, réglable.
+- **Rebonds détectés automatiquement** : un message de non-livraison
+  (mailer-daemon, adresse inexistante...) est reconnu — gratuitement, sans
+  appel API pour les cas évidents — et fait passer le prospect au statut
+  `rebond`. Ni la relance automatique ni un envoi manuel direct ne peuvent
+  plus repartir vers cette adresse. Visible sur `/stats` (taux de rebond),
+  un signal que Gmail utilise lui-même pour juger ta réputation d'envoi.
 - **Un seul job à la fois**, annulable en un clic — pas de génération en
   double en cas de clic répété.
 
