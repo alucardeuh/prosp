@@ -1,0 +1,1077 @@
+diff --git a/.env.example b/.env.example
+index b0b65b6..b5ebafc 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,11 +1,5 @@
+ ANTHROPIC_API_KEY=sk-ant-xxxxxxxxxxxxxxxxxxxxxxxx
+ 
+-# GetSales.io (agent LinkedIn) — tout dans le dashboard GetSales
+-GETSALES_HOST=xxxxx.getsales.io
+-GETSALES_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxx
+-GETSALES_LIST_UUID=xxxxxxxxxxxxxxxxxxxxxxxx
+-GETSALES_SENDER_PROFILE_UUID=xxxxxxxxxxxxxxxxxxxxxxxx
+-
+ # Modèles Claude utilisés par les agents (optionnel, valeurs par défaut
+ # correctes). Deux leviers séparés : la rédaction (qualité du texte envoyé
+ # aux prospects) garde un modèle plus capable ; la qualification et le
+diff --git a/db/database.py b/db/database.py
+index dac1627..0556112 100644
+--- a/db/database.py
++++ b/db/database.py
+@@ -781,11 +781,3 @@ def list_brouillons_programmes_dus(db_path: Path = DB_PATH) -> list[dict]:
+             "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime')"
+         ).fetchall()
+         return [dict(r) for r in rows]
+-
+-
+-def set_getsales_lead_uuid(prospect_id: int, lead_uuid: str, db_path: Path = DB_PATH) -> None:
+-    with get_connection(db_path) as conn:
+-        conn.execute(
+-            "UPDATE prospects SET getsales_lead_uuid = ? WHERE id = ?",
+-            (lead_uuid, prospect_id),
+-        )
+diff --git a/prosp-gestion-rebonds.patch b/prosp-gestion-rebonds.patch
+deleted file mode 100644
+index e25633c..0000000
+--- a/prosp-gestion-rebonds.patch
++++ /dev/null
+@@ -1,259 +0,0 @@
+-diff --git a/README.md b/README.md
+-index aea2c2d..99f2535 100644
+---- a/README.md
+-+++ b/README.md
+-@@ -157,6 +157,12 @@ volontaire.
+-   test, ou boucle accidentelle) ne sont jamais confondues avec une vraie
+-   réponse de prospect.
+- - **Max relances** : 2 par prospect par défaut, réglable.
+-+- **Rebonds détectés automatiquement** : un message de non-livraison
+-+  (mailer-daemon, adresse inexistante...) est reconnu — gratuitement, sans
+-+  appel API pour les cas évidents — et fait passer le prospect au statut
+-+  `rebond`. Ni la relance automatique ni un envoi manuel direct ne peuvent
+-+  plus repartir vers cette adresse. Visible sur `/stats` (taux de rebond),
+-+  un signal que Gmail utilise lui-même pour juger ta réputation d'envoi.
+- - **Un seul job à la fois**, annulable en un clic — pas de génération en
+-   double en cas de clic répété.
+- 
+-diff --git a/agents/email_reader.py b/agents/email_reader.py
+-index 4c90604..a8873e9 100644
+---- a/agents/email_reader.py
+-+++ b/agents/email_reader.py
+-@@ -39,9 +39,6 @@ from integrations import gmail_client  # noqa: E402
+- # Identifiant de modèle de l'API Anthropic. Surchargeable via .env (CLAUDE_MODEL=...).
+- # Même raisonnement que agents/qualification.py : classer une réponse
+- # (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
+--# rédaction — Haiku suffit, moitié prix. Surchargeable via CLAUDE_MODEL_RAPIDE.
+--# Même raisonnement que agents/qualification.py : classer une réponse
+--# (intéressé / pas intéressé / désinscription...) est mécanique, pas de la
+- # rédaction — Haiku suffit, moitié prix. Lu à chaque appel pour qu'un
+- # changement depuis Paramètres prenne effet sans redémarrage.
+- # Surchargeable via CLAUDE_MODEL_RAPIDE.
+-@@ -50,6 +47,24 @@ def _modele() -> str:
+- 
+- TAILLE_LOT_GMAIL = 20  # adresses par requête Gmail groupée
+- 
+-+# Détection heuristique des messages de rebond (non-livraison) — gratuite,
+-+# sans appel API, pour un motif aussi reconnaissable qu'un mailer-daemon.
+-+# La classification IA (catégorie "rebond" du TOOL_CLASSIFICATION plus bas)
+-+# reste le filet de sécurité pour les formats moins standards qu'elle
+-+# pourrait rater.
+-+PATRON_REBOND = re.compile(
+-+    r"mailer-daemon|postmaster|mail delivery (subsystem|failed)|"
+-+    r"delivery status notification|undelivered mail|delivery failure|"
+-+    r"non[- ]distribu|message non remis|returned to sender|failure notice",
+-+    re.IGNORECASE,
+-+)
+-+
+-+
+-+def _ressemble_a_un_rebond(email: dict) -> bool:
+-+    expediteur = (email.get("de") or "")
+-+    sujet = (email.get("sujet") or "")
+-+    return bool(PATRON_REBOND.search(expediteur) or PATRON_REBOND.search(sujet))
+-+
+- TOOL_CLASSIFICATION = {
+-     "name": "classifier_email",
+-     "description": "Classe la réponse email d'un prospect selon son intention.",
+-@@ -60,13 +75,16 @@ TOOL_CLASSIFICATION = {
+-                 "type": "string",
+-                 "enum": [
+-                     "interesse", "pas_interesse", "a_relancer",
+--                    "desinscription", "absence_bureau", "autre",
+-+                    "desinscription", "absence_bureau", "rebond", "autre",
+-                 ],
+-                 "description": (
+-                     "interesse: veut avancer / en savoir plus. pas_interesse: refus "
+-                     "clair. a_relancer: demande de recontacter plus tard. "
+-                     "desinscription: demande explicite d'arrêt de contact. "
+-                     "absence_bureau: réponse automatique (vacances, hors bureau). "
+-+                    "rebond: message de non-livraison automatique (l'adresse n'existe "
+-+                    "plus, boîte pleine, domaine introuvable...) — PAS une vraie réponse "
+-+                    "humaine, même si le texte contient des formulations polies. "
+-                     "autre: ne rentre dans aucune case ci-dessus."
+-                 ),
+-             },
+-@@ -87,6 +105,7 @@ CATEGORIE_VERS_STATUT = {
+-     "interesse": "repondu",
+-     "pas_interesse": "perdu",
+-     "desinscription": "desinscrit",
+-+    "rebond": "rebond",
+- }
+- 
+- 
+-@@ -197,12 +216,30 @@ def collecter_nouveaux_emails(service, prospects: list[dict]) -> list[tuple]:
+- 
+- def traiter_email(prospect: dict, email: dict, dry_run: bool = False, client=None) -> dict:
+-     """Classe UN email et écrit le résultat en base. Brique utilisée par
+--    run() (CLI) et par le job du dashboard."""
+--    resultat, usage = _fake_classification() if dry_run else classify_email(prospect, email, client)
+-+    run() (CLI) et par le job du dashboard.
+-+
+-+    Un rebond détecté heuristiquement (expéditeur/sujet caractéristique
+-+    d'un mailer-daemon) court-circuite l'appel API : aucun doute possible,
+-+    inutile de payer un classement IA pour ça."""
+-+    if not dry_run and _ressemble_a_un_rebond(email):
+-+        resultat = {
+-+            "categorie": "rebond",
+-+            "raison": "Expéditeur ou sujet caractéristique d'un message de non-livraison (mailer-daemon...).",
+-+            "action_recommandee": "Vérifier/corriger l'adresse email de ce prospect avant tout nouvel envoi.",
+-+        }
+-+        usage = {"tokens_entree": 0, "tokens_sortie": 0, "recherches_web": 0}
+-+    else:
+-+        resultat, usage = _fake_classification() if dry_run else classify_email(prospect, email, client)
+- 
+-     nouveau_statut = CATEGORIE_VERS_STATUT.get(resultat["categorie"])
+-     if nouveau_statut:
+-         db.update_statut(prospect["id"], nouveau_statut)
+-+    if resultat["categorie"] == "rebond":
+-+        # Bloque aussi un envoi manuel direct depuis la fiche ou une
+-+        # sélection sur mesure — pas seulement la relance automatique, qui
+-+        # de toute façon n'est plus déclenchée pour ce prospect (elle exige
+-+        # statut = 'contacte', déjà changé en 'rebond' ci-dessus).
+-+        db.set_email_verifie(prospect["id"], "invalide")
+- 
+-     db.add_interaction(
+-         prospect["id"], "email_recu",
+-diff --git a/dashboard/app.py b/dashboard/app.py
+-index 968a22a..2c457a8 100644
+---- a/dashboard/app.py
+-+++ b/dashboard/app.py
+-@@ -89,12 +89,12 @@ from integrations import gmail_client, hubspot_client  # noqa: E402
+- app = Flask(__name__)
+- app.secret_key = "prospection-locale"  # app locale mono-utilisateur
+- 
+--STATUTS = ["nouveau", "qualifie", "disqualifie", "contacte", "repondu", "rdv", "perdu", "desinscrit"]
+-+STATUTS = ["nouveau", "qualifie", "disqualifie", "contacte", "repondu", "rdv", "perdu", "rebond", "desinscrit"]
+- 
+- LIBELLES_STATUT = {
+-     "nouveau": "Nouveau", "qualifie": "Qualifié", "disqualifie": "Disqualifié",
+-     "contacte": "Contacté", "repondu": "A répondu", "rdv": "RDV",
+--    "perdu": "Perdu", "desinscrit": "Désinscrit",
+-+    "perdu": "Perdu", "rebond": "Rebond (email invalide)", "desinscrit": "Désinscrit",
+- }
+- 
+- # Initialisation UNE SEULE FOIS au démarrage du process (import de ce module),
+-diff --git a/dashboard/static/app.css b/dashboard/static/app.css
+-index f81e5b2..46481ff 100644
+---- a/dashboard/static/app.css
+-+++ b/dashboard/static/app.css
+-@@ -238,6 +238,7 @@ h2 { font-family: var(--display); font-size: 15px; font-weight: 600; margin: 30p
+- .c-repondu     { background: #1d8a63; }
+- .c-rdv         { background: var(--pine-deep); }
+- .c-perdu       { background: #c98a80; }
+-+.c-rebond      { background: var(--amber); }
+- .c-desinscrit  { background: var(--brick); }
+- 
+- /* ---------------- cartes & grilles ---------------- */
+-diff --git a/dashboard/templates/stats.html b/dashboard/templates/stats.html
+-index d88b2a7..86e9167 100644
+---- a/dashboard/templates/stats.html
+-+++ b/dashboard/templates/stats.html
+-@@ -33,6 +33,10 @@
+-         <div class="valeur">{{ g.rdv }}</div>
+-         <div class="legende">rendez-vous obtenus</div>
+-     </div>
+-+    <div class="tuile">
+-+        <div class="valeur">{{ g.rebonds }}{% if g.taux_rebond is not none %} <span class="silencieux" style="font-size:14px">({{ g.taux_rebond }}%)</span>{% endif %}</div>
+-+        <div class="legende">rebonds (adresses invalides)</div>
+-+    </div>
+-     <div class="tuile">
+-         <div class="valeur">{{ g.desinscrits }}</div>
+-         <div class="legende">désinscrits</div>
+-diff --git a/db/database.py b/db/database.py
+-index f8263fc..dac1627 100644
+---- a/db/database.py
+-+++ b/db/database.py
+-@@ -53,7 +53,25 @@ def init_db(db_path: Path = DB_PATH) -> None:
+-         conn.execute("PRAGMA synchronous=NORMAL")
+-         tables = {row[0] for row in conn.execute(
+-             "SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+-+
+-+        # SQLite ne sait pas modifier une contrainte CHECK existante avec un
+-+        # simple ALTER TABLE — il faut recréer la table pour ajouter le
+-+        # statut "rebond". Toutes les données sont conservées : renomme
+-+        # l'ancienne table, laisse schema.sql (plus bas) recréer "prospects"
+-+        # avec la contrainte à jour (et toutes les colonnes actuelles), puis
+-+        # recopie les lignes existantes dedans.
+-+        migration_statut_colonnes = None
+-         if "prospects" in tables:
+-+            definition_actuelle = conn.execute(
+-+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='prospects'"
+-+            ).fetchone()
+-+            if definition_actuelle and "'rebond'" not in (definition_actuelle[0] or ""):
+-+                migration_statut_colonnes = [
+-+                    row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()
+-+                ]
+-+                conn.execute("ALTER TABLE prospects RENAME TO prospects_migration_statut")
+-+
+-+        if "prospects" in tables and migration_statut_colonnes is None:
+-             colonnes = {row[1] for row in conn.execute("PRAGMA table_info(prospects)").fetchall()}
+-             if "getsales_lead_uuid" not in colonnes:
+-                 conn.execute("ALTER TABLE prospects ADD COLUMN getsales_lead_uuid TEXT")
+-@@ -86,6 +104,19 @@ def init_db(db_path: Path = DB_PATH) -> None:
+-             if "mis_de_cote" not in cols_br:
+-                 conn.execute("ALTER TABLE brouillons ADD COLUMN mis_de_cote INTEGER NOT NULL DEFAULT 0")
+-         conn.executescript(SCHEMA_PATH.read_text())
+-+
+-+        if migration_statut_colonnes:
+-+            # schema.sql vient de recréer "prospects" avec la contrainte à
+-+            # jour et toutes les colonnes actuelles (y compris celles plus
+-+            # récentes que l'ancienne table, qui prendront leur valeur par
+-+            # défaut). Ne recopie que les colonnes qui existaient déjà.
+-+            colonnes_communes = ", ".join(migration_statut_colonnes)
+-+            conn.execute(
+-+                f"INSERT INTO prospects ({colonnes_communes}) "
+-+                f"SELECT {colonnes_communes} FROM prospects_migration_statut"
+-+            )
+-+            conn.execute("DROP TABLE prospects_migration_statut")
+-+
+-         for cle, valeur in REGLAGES_DEFAUT.items():
+-             conn.execute("INSERT OR IGNORE INTO reglages (cle, valeur) VALUES (?, ?)", (cle, valeur))
+-         conn.commit()
+-@@ -598,12 +629,17 @@ def stats_envois_par_semaine(nb_semaines: int = 8, db_path: Path = DB_PATH) -> l
+- 
+- 
+- def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
+--    """Chiffres clés du profil : contactés, réponses, taux, désinscriptions..."""
+-+    """Chiffres clés du profil : contactés, réponses, taux, désinscriptions...
+-+    Un rebond compte comme "contacté" (l'email est bien parti) mais jamais
+-+    comme une réponse — l'exclure des contactés aurait artificiellement
+-+    gonflé le taux de réponse."""
+-     counts = counts_par_statut(profil=profil, db_path=db_path)
+--    contactes_cumules = sum(counts.get(s, 0) for s in ("contacte", "repondu", "rdv", "perdu", "desinscrit"))
+-+    contactes_cumules = sum(counts.get(s, 0) for s in
+-+                            ("contacte", "repondu", "rdv", "perdu", "rebond", "desinscrit"))
+-     reponses = sum(counts.get(s, 0) for s in ("repondu", "rdv"))
+-     qualifies_cumules = contactes_cumules + counts.get("qualifie", 0)
+-     evalues = qualifies_cumules + counts.get("disqualifie", 0)
+-+    rebonds = counts.get("rebond", 0)
+-     return {
+-         "total": sum(counts.values()),
+-         "counts": counts,
+-@@ -613,6 +649,8 @@ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
+-         "taux_qualification": round(100 * qualifies_cumules / evalues) if evalues else None,
+-         "rdv": counts.get("rdv", 0),
+-         "desinscrits": counts.get("desinscrit", 0),
+-+        "rebonds": rebonds,
+-+        "taux_rebond": round(100 * rebonds / contactes_cumules) if contactes_cumules else None,
+-     }
+- 
+- 
+-diff --git a/db/schema.sql b/db/schema.sql
+-index bfe4122..af0a360 100644
+---- a/db/schema.sql
+-+++ b/db/schema.sql
+-@@ -16,12 +16,12 @@ CREATE TABLE IF NOT EXISTS prospects (
+- 
+-     -- Cycle de vie du prospect. C'est CE champ que le manager regarde
+-     -- pour décider quel agent doit agir ensuite.
+--    -- nouveau -> qualifie / disqualifie -> contacte -> repondu -> rdv / perdu
+-+    -- nouveau -> qualifie / disqualifie -> contacte -> repondu -> rdv / perdu / rebond
+-     -- desinscrit peut arriver à tout moment et doit tout bloquer.
+-     statut              TEXT NOT NULL DEFAULT 'nouveau'
+-                          CHECK (statut IN (
+-                              'nouveau', 'qualifie', 'disqualifie',
+--                             'contacte', 'repondu', 'rdv', 'perdu', 'desinscrit'
+-+                             'contacte', 'repondu', 'rdv', 'perdu', 'rebond', 'desinscrit'
+-                          )),
+- 
+-     score_qualification INTEGER,
+diff --git a/prosp-mapping-csv.patch b/prosp-mapping-csv.patch
+deleted file mode 100644
+index 23bc77f..0000000
+--- a/prosp-mapping-csv.patch
++++ /dev/null
+@@ -1,393 +0,0 @@
+-diff --git a/dashboard/app.py b/dashboard/app.py
+-index bdc4ce5..7f9cbd6 100644
+---- a/dashboard/app.py
+-+++ b/dashboard/app.py
+-@@ -23,6 +23,7 @@ ne gèle plus jamais, une barre de progression suit l'avancement en direct.
+- from __future__ import annotations
+- 
+- import os
+-+import re
+- import sys
+- import tempfile
+- import json
+-@@ -1136,7 +1137,11 @@ def supprimer_champ_perso():
+- 
+- # Alias de colonnes CSV reconnus (comparés après normalisation via
+- # profils._identifiant_sur, donc insensibles à la casse et aux accents) —
+--# couvre notamment les exports HubSpot en français.
+-+# couvre notamment les exports HubSpot en français. Sert de détection
+-+# AUTOMATIQUE par défaut — ajustable colonne par colonne à l'import
+-+# (voir /ajouter/csv/previsualiser), donc pas besoin de deviner tous les
+-+# synonymes possibles dans toutes les langues (ex : "clinique" pour
+-+# "entreprise" sur un annuaire médical).
+- ALIAS_COLONNES_CSV = {
+-     "prenom": "prenom",
+-     "nom": "nom",
+-@@ -1149,6 +1154,36 @@ ALIAS_COLONNES_CSV = {
+-     "secteur": "secteur", "industry": "secteur", "industrie": "secteur",
+- }
+- 
+-+# Champs cibles proposés dans le sélecteur de correspondance à l'import —
+-+# mêmes valeurs que celles utilisées comme cibles dans ALIAS_COLONNES_CSV,
+-+# plus les deux options spéciales "ignorer" et "champ personnalisé".
+-+CHAMPS_CIBLES_IMPORT = [
+-+    ("prenom", "Prénom"), ("nom", "Nom"), ("email", "Email"), ("telephone", "Téléphone"),
+-+    ("poste", "Poste"), ("entreprise", "Entreprise"), ("secteur", "Secteur"),
+-+    ("linkedin_url", "LinkedIn"), ("champ_perso", "Champ personnalisé"), ("ignorer", "Ignorer cette colonne"),
+-+]
+-+
+-+# Titres/qualifications fréquents en tête d'un nom complet non séparé (ex :
+-+# exports scrapés n'ayant qu'une seule colonne "Dr. Jonida Reveli" plutôt
+-+# que prénom et nom distincts) — retirés avant de séparer prénom et nom.
+-+TITRES_NOM_COMPLET = {"dr", "shk", "prof", "as", "m", "mme", "mr", "mlle"}
+-+
+-+
+-+def _separer_prenom_nom(nom_complet: str) -> tuple[str, str]:
+-+    """Sépare un nom complet ('Dr. Jonida Reveli') en (prénom, nom) —
+-+    ('Jonida', 'Reveli') — quand un CSV n'a qu'une seule colonne de nom
+-+    plutôt que prénom et nom distincts. Retire d'abord les titres usuels
+-+    (Dr., Prof., As. pour Assistent...), garde le premier mot restant comme
+-+    prénom, tout le reste comme nom. Repli sur (vide, texte original en
+-+    entier) si un seul mot subsiste : impossible de séparer, mieux vaut
+-+    tout garder dans nom que d'inventer un prénom."""
+-+    mots = re.sub(r"\s+", " ", nom_complet.strip()).split(" ")
+-+    while mots and mots[0].rstrip(".").lower() in TITRES_NOM_COMPLET:
+-+        mots.pop(0)
+-+    if len(mots) <= 1:
+-+        return "", " ".join(mots)
+-+    return mots[0], " ".join(mots[1:])
+-+
+- # Colonnes spéciales des exports HubSpot : un contact peut être associé à
+- # PLUSIEURS entreprises (listées séparées par ';'), et prendre juste la
+- # première donnerait parfois la mauvaise — l'ordre n'est pas garanti
+-@@ -1182,13 +1217,17 @@ def _entreprise_principale_hubspot(row_norm: dict) -> str:
+-     return liste_noms[0]
+- 
+- 
+--def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tuple[dict, dict]:
+-+def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set,
+-+                      correspondance: dict[str, str] | None = None) -> tuple[dict, dict]:
+-     """Transforme une ligne CSV brute (en-têtes libres, ex. export HubSpot
+--    en français) en (donnees_fixes, champs_perso) prêts pour add_prospect.
+--    Rien n'est perdu : tout ce qui n'est pas reconnu comme champ fixe
+--    devient automatiquement un champ personnalisé (créé une seule fois par
+--    import, pas par ligne — noms_champs_deja_crees évite de re-tenter
+--    profils.ajouter_champ 78 fois pour la même colonne)."""
+-+    en français ou annuaire scrapé) en (donnees_fixes, champs_perso) prêts
+-+    pour add_prospect. correspondance, si fourni (colonne normalisée ->
+-+    champ cible ou 'ignorer' ou 'champ_perso'), prend le pas sur la
+-+    détection automatique — ajustable à l'import, voir
+-+    /ajouter/csv/previsualiser. Rien n'est perdu par défaut : tout ce qui
+-+    n'est pas reconnu comme champ fixe devient automatiquement un champ
+-+    personnalisé (créé une seule fois par import, pas par ligne)."""
+-+    correspondance = correspondance or {}
+-     row_norm, entete_origine = {}, {}
+-     for cle, valeur in row.items():
+-         if not cle or not valeur:
+-@@ -1213,11 +1252,16 @@ def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tu
+-     for norm, valeur in row_norm.items():
+-         if norm in colonnes_traitees_a_part:
+-             continue
+--        if norm in ALIAS_COLONNES_CSV:
+--            donnees[ALIAS_COLONNES_CSV[norm]] = valeur
+--        else:
+-+        cible = correspondance.get(norm)
+-+        if cible == "ignorer":
+-+            continue
+-+        if cible and cible != "champ_perso":
+-+            donnees[cible] = valeur
+-+        elif cible == "champ_perso" or (not cible and norm not in ALIAS_COLONNES_CSV):
+-             _creer_champ_si_besoin(norm, entete_origine[norm])
+-             champs_perso[norm] = valeur
+-+        else:
+-+            donnees[ALIAS_COLONNES_CSV[norm]] = valeur
+- 
+-     if _COL_ID_HUBSPOT in row_norm:
+-         # Même nom de champ perso que l'import API HubSpot -> dédoublonnage
+-@@ -1235,9 +1279,141 @@ def _mapper_ligne_csv(row: dict, profil: str, noms_champs_deja_crees: set) -> tu
+-             _creer_champ_si_besoin("entreprises_associees", "Entreprises associées (HubSpot)")
+-             champs_perso["entreprises_associees"] = row_norm[_COL_ENTREPRISES]
+- 
+-+    # Une seule colonne "nom" contenant le nom complet (fréquent sur les
+-+    # annuaires scrapés, ex. mjeket.al : "Dr. Jonida Reveli" en une seule
+-+    # colonne) plutôt que prénom et nom séparés -> sépare automatiquement
+-+    # plutôt que de laisser prénom vide et tout jeter dans nom.
+-+    if donnees.get("nom") and not donnees.get("prenom"):
+-+        prenom_separe, nom_separe = _separer_prenom_nom(donnees["nom"])
+-+        if prenom_separe:
+-+            donnees["prenom"] = prenom_separe
+-+            donnees["nom"] = nom_separe
+-+
+-     return donnees, champs_perso
+- 
+- 
+-+import tempfile
+-+import uuid
+-+
+-+# Fichiers CSV en attente de confirmation après prévisualisation — un
+-+# dashboard local mono-utilisateur n'a pas besoin d'un vrai stockage de
+-+# session, un dict en mémoire suffit (perdu si l'app redémarre entre les
+-+# deux étapes, ce qui n'arrive jamais en usage normal).
+-+_IMPORTS_EN_ATTENTE: dict[str, Path] = {}
+-+
+-+
+-+def _nettoyer_import_en_attente(token: str) -> None:
+-+    chemin = _IMPORTS_EN_ATTENTE.pop(token, None)
+-+    if chemin and chemin.exists():
+-+        chemin.unlink(missing_ok=True)
+-+
+-+
+-+def _detection_auto_colonne(norm: str) -> str:
+-+    if norm in ALIAS_COLONNES_CSV:
+-+        return ALIAS_COLONNES_CSV[norm]
+-+    return "champ_perso"
+-+
+-+
+-+@app.route("/ajouter/csv/previsualiser", methods=["POST"])
+-+def previsualiser_csv():
+-+    """Étape 1 : lit le fichier, détecte les colonnes et leur correspondance
+-+    automatique, garde le fichier de côté (token) le temps que la personne
+-+    ajuste si besoin. Rien n'est encore importé à ce stade."""
+-+    fichier = request.files.get("fichier")
+-+    if not fichier or fichier.filename == "":
+-+        return jsonify({"erreur": "Aucun fichier sélectionné."}), 400
+-+
+-+    import csv as csv_module
+-+    import io
+-+
+-+    try:
+-+        contenu = fichier.read().decode("utf-8-sig")
+-+    except UnicodeDecodeError:
+-+        return jsonify({"erreur": "Le fichier ne semble pas être un CSV encodé en "
+-+                                  "UTF-8 — ré-enregistre-le en UTF-8 puis réessaie."}), 400
+-+
+-+    try:
+-+        lignes = list(csv_module.DictReader(io.StringIO(contenu)))
+-+    except Exception as exc:  # noqa: BLE001
+-+        return jsonify({"erreur": f"Fichier illisible : {exc}"}), 400
+-+    if not lignes:
+-+        return jsonify({"erreur": "Le fichier est vide."}), 400
+-+
+-+    entetes = list(lignes[0].keys())
+-+    premiere_ligne = lignes[0]
+-+    colonnes_speciales = {_COL_ENTREPRISES, _COL_ENTREPRISES_IDS,
+-+                          _COL_ID_ENTREPRISE_PRINCIPALE, _COL_ID_HUBSPOT}
+-+
+-+    colonnes = []
+-+    for entete in entetes:
+-+        norm = profils._identifiant_sur(entete)
+-+        colonnes.append({
+-+            "brut": entete,
+-+            "normalise": norm,
+-+            "special": norm in colonnes_speciales,
+-+            "cible_auto": "entreprise" if norm in (_COL_ENTREPRISES, _COL_ENTREPRISES_IDS,
+-+                                                    _COL_ID_ENTREPRISE_PRINCIPALE)
+-+                         else ("champ_perso" if norm == _COL_ID_HUBSPOT else _detection_auto_colonne(norm)),
+-+            "exemple": (premiere_ligne.get(entete) or "")[:80],
+-+        })
+-+
+-+    # Sauvegarde temporaire du contenu décodé, retrouvé à l'étape de
+-+    # confirmation via le token plutôt que de re-uploader le fichier.
+-+    token = uuid.uuid4().hex
+-+    chemin_temp = Path(tempfile.gettempdir()) / f"prosp_import_{token}.csv"
+-+    chemin_temp.write_text(contenu, encoding="utf-8")
+-+    _IMPORTS_EN_ATTENTE[token] = chemin_temp
+-+
+-+    return jsonify({"ok": True, "token": token, "nb_lignes": len(lignes), "colonnes": colonnes})
+-+
+-+
+-+@app.route("/ajouter/csv/confirmer", methods=["POST"])
+-+def confirmer_csv():
+-+    """Étape 2 : importe pour de bon, avec la correspondance éventuellement
+-+    ajustée par colonne (sinon la détection automatique de l'étape 1)."""
+-+    donnees_requete = request.get_json(silent=True) or {}
+-+    token = donnees_requete.get("token", "")
+-+    correspondance = donnees_requete.get("mapping") or {}
+-+
+-+    chemin_temp = _IMPORTS_EN_ATTENTE.get(token)
+-+    if not chemin_temp or not chemin_temp.exists():
+-+        return jsonify({"erreur": "Cette prévisualisation a expiré — réessaie l'import."}), 400
+-+
+-+    import csv as csv_module
+-+
+-+    profil = db.profil_actif()
+-+    ajoutes, ignores = 0, []
+-+    try:
+-+        contenu = chemin_temp.read_text(encoding="utf-8")
+-+        noms_champs_deja_crees = {c["nom"] for c in profils.load_champs(profil)}
+-+        for row in csv_module.DictReader(contenu.splitlines()):
+-+            donnees, champs_perso = _mapper_ligne_csv(row, profil, noms_champs_deja_crees, correspondance)
+-+            donnees["profil"] = profil
+-+            donnees.setdefault("source", "import_csv")
+-+            nom_affiche = f"{donnees.get('prenom', '')} {donnees.get('nom', '')}".strip() or donnees.get("email") or "?"
+-+            hubspot_id = champs_perso.get("hubspot_id", "")
+-+            deja_present = db.prospect_existe_par_email(donnees.get("email", ""), profil) or (
+-+                hubspot_id and db.prospect_existe_par_champ_perso("hubspot_id", hubspot_id, profil)
+-+            )
+-+            if deja_present:
+-+                ignores.append(nom_affiche)
+-+                continue
+-+            try:
+-+                db.add_prospect(donnees, champs_perso=champs_perso)
+-+                ajoutes += 1
+-+            except Exception:  # noqa: BLE001 - doublon linkedin_url le plus souvent
+-+                ignores.append(nom_affiche)
+-+    except Exception as exc:  # noqa: BLE001
+-+        return jsonify({"erreur": f"Import impossible : {exc}"}), 400
+-+    finally:
+-+        _nettoyer_import_en_attente(token)
+-+
+-+    message = f"{ajoutes} prospect(s) importé(s) dans « {profil} »."
+-+    if ignores:
+-+        message += f" {len(ignores)} ignoré(s) (doublons) : {', '.join(ignores[:5])}{'...' if len(ignores) > 5 else ''}."
+-+    return jsonify({"ok": True, "message": message, "ajoutes": ajoutes, "ignores": len(ignores)})
+-+
+-+
+- @app.route("/ajouter/csv", methods=["POST"])
+- def ajouter_csv():
+-     fichier = request.files.get("fichier")
+-diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+-index 89c109a..0d372c4 100644
+---- a/dashboard/static/app.js
+-+++ b/dashboard/static/app.js
+-@@ -401,3 +401,94 @@ function filtrerTable(champ) {
+-   const compteur = document.getElementById("compteur-visible");
+-   if (compteur) compteur.textContent = visibles;
+- }
+-+
+-+// ---------------------------------------------------------------- import CSV (prévisualisation + correspondance ajustable)
+-+
+-+let tokenImportCsv = null;
+-+
+-+const OPTIONS_CHAMPS_IMPORT_CSV = [
+-+  ["prenom", "Prénom"], ["nom", "Nom"], ["email", "Email"], ["telephone", "Téléphone"],
+-+  ["poste", "Poste"], ["entreprise", "Entreprise"], ["secteur", "Secteur"],
+-+  ["linkedin_url", "LinkedIn"], ["champ_perso", "Champ personnalisé"], ["ignorer", "Ignorer cette colonne"],
+-+];
+-+
+-+async function analyserCsv(bouton) {
+-+  const champFichier = document.getElementById("fichier");
+-+  if (!champFichier.files.length) { toast("Choisis un fichier d'abord.", "erreur"); return; }
+-+  bouton.disabled = true;
+-+  const formData = new FormData();
+-+  formData.append("fichier", champFichier.files[0]);
+-+  try {
+-+    const reponse = await fetch("/ajouter/csv/previsualiser", { method: "POST", body: formData });
+-+    const donnees = await reponse.json();
+-+    bouton.disabled = false;
+-+    if (!reponse.ok) { toast(donnees.erreur || "Fichier illisible.", "erreur"); return; }
+-+    tokenImportCsv = donnees.token;
+-+    afficherMappingCsv(donnees);
+-+  } catch (e) {
+-+    bouton.disabled = false;
+-+    toast("Le serveur ne répond pas — vérifie qu'il tourne toujours.", "erreur");
+-+  }
+-+}
+-+
+-+function afficherMappingCsv(donnees) {
+-+  document.getElementById("resume-import-csv").textContent =
+-+    donnees.nb_lignes + " ligne(s) détectée(s). Vérifie la correspondance ci-dessous, ajuste si besoin, puis confirme.";
+-+
+-+  const corps = document.querySelector("#table-mapping-csv tbody");
+-+  corps.innerHTML = "";
+-+  donnees.colonnes.forEach((col) => {
+-+    const tr = document.createElement("tr");
+-+
+-+    const tdBrut = document.createElement("td");
+-+    tdBrut.textContent = col.brut;
+-+    tr.appendChild(tdBrut);
+-+
+-+    const tdExemple = document.createElement("td");
+-+    tdExemple.className = "silencieux";
+-+    tdExemple.textContent = col.exemple || "—";
+-+    tr.appendChild(tdExemple);
+-+
+-+    const tdCible = document.createElement("td");
+-+    if (col.special) {
+-+      tdCible.innerHTML = '<span class="pastille pastille-off">détection automatique (HubSpot)</span>';
+-+    } else {
+-+      const select = document.createElement("select");
+-+      select.dataset.colonne = col.normalise;
+-+      select.className = "select-mapping-csv";
+-+      OPTIONS_CHAMPS_IMPORT_CSV.forEach(([valeur, libelle]) => {
+-+        const option = document.createElement("option");
+-+        option.value = valeur;
+-+        option.textContent = libelle;
+-+        if (valeur === col.cible_auto) option.selected = true;
+-+        select.appendChild(option);
+-+      });
+-+      tdCible.appendChild(select);
+-+    }
+-+    tr.appendChild(tdCible);
+-+    corps.appendChild(tr);
+-+  });
+-+
+-+  document.getElementById("zone-mapping-csv").style.display = "block";
+-+}
+-+
+-+async function confirmerImportCsv(bouton) {
+-+  if (!tokenImportCsv) return;
+-+  const mapping = {};
+-+  document.querySelectorAll(".select-mapping-csv").forEach((sel) => {
+-+    mapping[sel.dataset.colonne] = sel.value;
+-+  });
+-+  bouton.disabled = true;
+-+  const donnees = await action(
+-+    "/ajouter/csv/confirmer",
+-+    { token: tokenImportCsv, mapping: mapping },
+-+    { recharger: true, delai: 600 }
+-+  );
+-+  if (!donnees) bouton.disabled = false;
+-+}
+-+
+-+function annulerImportCsv() {
+-+  tokenImportCsv = null;
+-+  document.getElementById("zone-mapping-csv").style.display = "none";
+-+  document.getElementById("fichier").value = "";
+-+}
+-diff --git a/dashboard/templates/ajouter.html b/dashboard/templates/ajouter.html
+-index 1c1585d..ecd44ee 100644
+---- a/dashboard/templates/ajouter.html
+-+++ b/dashboard/templates/ajouter.html
+-@@ -52,19 +52,37 @@
+-             majuscules sans importance) : prénom, nom, email, téléphone,
+-             poste, entreprise, secteur, LinkedIn — dont les exports HubSpot
+-             (gère aussi l'entreprise "principale" quand plusieurs sont
+--            associées à un contact). Toute autre colonne devient
+--            automatiquement un champ personnalisé plutôt que d'être perdue.
+-+            associées à un contact). Une seule colonne "nom" avec le nom
+-+            complet (ex. "Dr. Jonida Reveli") est séparée automatiquement en
+-+            prénom et nom. Après analyse, vérifie et ajuste la correspondance
+-+            de chaque colonne avant de confirmer — utile si tes propres noms
+-+            de colonnes ne correspondent à rien de connu (ex. "clinique" pour
+-+            ce qui doit devenir "entreprise").
+-             {% if champs_perso %}Champs personnalisés actuels :
+-             <span class="mono">{{ champs_perso | map(attribute='nom') | join(', ') }}</span>.{% endif %}
+-             Doublons (email ou LinkedIn déjà en base) rejetés proprement.
+-         </p>
+--        <form method="post" action="/ajouter/csv" enctype="multipart/form-data" style="margin-top:12px">
+-+        <form id="form-import-csv" onsubmit="return false;" style="margin-top:12px">
+-             <label for="fichier">Fichier CSV</label>
+-             <input type="file" id="fichier" name="fichier" accept=".csv" required>
+-             <div class="rangee-boutons" style="margin-top:16px">
+--                <button type="submit" class="primaire">Importer</button>
+-+                <button type="button" class="primaire" onclick="analyserCsv(this)">Analyser le fichier</button>
+-             </div>
+-         </form>
+-+
+-+        <div id="zone-mapping-csv" style="display:none; margin-top:20px">
+-+            <p class="aide" id="resume-import-csv"></p>
+-+            <div class="table-englobe">
+-+            <table id="table-mapping-csv">
+-+                <thead><tr><th>Colonne du fichier</th><th>Exemple</th><th>Correspond à</th></tr></thead>
+-+                <tbody></tbody>
+-+            </table>
+-+            </div>
+-+            <div class="rangee-boutons" style="margin-top:14px">
+-+                <button class="primaire" onclick="confirmerImportCsv(this)">Confirmer l'import</button>
+-+                <button class="danger" onclick="annulerImportCsv()">Annuler</button>
+-+            </div>
+-+        </div>
+-     </div>
+- 
+-     <div class="carte">
+diff --git a/prosp-niveau-humanisation.patch b/prosp-niveau-humanisation.patch
+deleted file mode 100644
+index 8112ebc..0000000
+--- a/prosp-niveau-humanisation.patch
++++ /dev/null
+@@ -1,162 +0,0 @@
+-diff --git a/agents/email_sender.py b/agents/email_sender.py
+-index 1b02b7c..e5b4988 100644
+---- a/agents/email_sender.py
+-+++ b/agents/email_sender.py
+-@@ -122,12 +122,22 @@ majuscules intégrales, points d'exclamation multiples, ni excès de liens
+- ## Humaniser
+- Phrases courtes, une idée par paragraphe, jamais de bloc dense. Aucun
+- jargon marketing ("solution innovante", "leader du marché", "révolutionner
+--votre..." sont interdits) — décris un problème concret, pas un
+-+votre..." sont interdits). Décris un problème concret, pas un
+- argumentaire. Écris comme si tu démarrais une conversation avec une
+- personne précise, pas comme si tu diffusais une annonce. Une formulation
+- trop parfaite et trop symétrique se lit comme un template : préfère une
+- tournure un peu plus directe et naturelle.
+- 
+-+Jamais de tiret long (—) pour enchaîner deux idées dans une phrase : c'est
+-+un tic d'écriture reconnaissable entre mille, ça sonne immédiatement
+-+généré. Coupe en deux phrases avec un point, ou relie avec "et", "mais",
+-+"donc", une virgule. Exemple à ne jamais produire : "Votre équipe grandit
+-+vite — ça complique le suivi commercial." Écris plutôt : "Votre équipe
+-+grandit vite. Ça complique le suivi commercial." ou "Votre équipe grandit
+-+vite, et ça complique le suivi commercial." Même chose pour les énumérations
+-+en triolet trop cadencées ("rapide, simple et efficace") : une vraie
+-+personne n'écrit pas par groupes de trois soigneusement équilibrés.
+-+
+- ## Objet (si tu dois en générer un)
+- 4 à 8 mots, spécifique à ce prospect précis plutôt que vendeur. Jamais de
+- majuscules, ponctuation excessive ou emoji.
+-@@ -183,7 +193,7 @@ Structure : {brief.get('structure_attendue', '')}
+- 
+-     if modeles:
+-         blocs_exemples = "\n\n".join(
+--            f"Exemple {i+1}{' — ' + m['titre'] if m.get('titre') else ''}\n"
+-+            f"Exemple {i+1}{' : ' + m['titre'] if m.get('titre') else ''}\n"
+-             f"Objet : {m.get('objet', '')}\n{m.get('corps', '')}"
+-             for i, m in enumerate(modeles)
+-         )
+-@@ -191,22 +201,22 @@ Structure : {brief.get('structure_attendue', '')}
+- 
+- # Exemples d'emails qui ont déjà bien fonctionné
+- Inspire-toi de leur ton, de leur structure et de leur niveau de
+--personnalisation pour rédiger CET email — ce sont des repères de style,
+-+personnalisation pour rédiger CET email. Ce sont des repères de style,
+- jamais un texte à recopier tel quel : chaque email doit rester unique et
+- vraiment écrit pour CE prospect précis.
+- 
+- {blocs_exemples}"""
+- 
+-     if avec_recherche:
+--        bloc_lot = """# Étape 1 — recherche (obligatoire avant de rédiger)
+-+        bloc_lot = """# Étape 1 : recherche (obligatoire avant de rédiger)
+- Cherche sur le web une actualité récente et pertinente sur l'entreprise du
+- prospect (levée de fonds, recrutement clé, expansion, nouveau produit,
+- résultats financiers, changement de direction...). N'utilise cette info QUE
+--si elle est réelle et solide — ne mentionne jamais une actualité inventée ou
+-+si elle est réelle et solide. Ne mentionne jamais une actualité inventée ou
+- incertaine. Si tu ne trouves rien de fiable, base-toi uniquement sur le
+- profil du prospect, sans forcer une actualité qui n'existe pas.
+- 
+--# Étape 2 — rédaction
+-+# Étape 2 : rédaction
+- Une fois ta recherche faite, appelle l'outil `rediger_email` avec ton
+- résultat final. Ne réponds jamais en texte libre à la fin."""
+-     else:
+-@@ -220,7 +230,7 @@ résultat final. Ne réponds jamais en texte libre à la fin."""
+-         bloc_lot += f"""
+- 
+- # Contexte donné pour ce lot d'envoi précis (par la personne qui a lancé
+--cette génération — à prendre en compte en priorité, ça décrit l'angle ou
+-+cette génération, à prendre en compte en priorité : ça décrit l'angle ou
+- la raison de cette campagne précise)
+- {contexte_batch.strip()}"""
+- 
+-@@ -243,7 +253,7 @@ Notes : {prospect.get('notes', '')}
+- Raison de qualification (pourquoi ce prospect a été retenu) : {prospect.get('raison_qualification', '')}
+- 
+- Rédige un email qui montre concrètement qu'on connaît la situation de CE
+--prospect précis — pas un email générique qui pourrait être envoyé à
+-+prospect précis, pas un email générique qui pourrait être envoyé à
+- n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
+- sinon sur un détail réel de son profil ci-dessus."""
+- 
+-@@ -255,7 +265,7 @@ def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "") -> li
+-     produit = icp.get("produit", {})
+-     bloc_profil = f"""Tu es un agent qui rédige des emails de RELANCE de
+- prospection B2B. Le prospect a déjà reçu un premier email resté sans
+--réponse — tu rédiges le suivi.
+-+réponse : tu rédiges le suivi.
+- 
+- Appelle l'outil `rediger_email` avec ton résultat. Ne réponds jamais en
+- texte libre.
+-@@ -266,7 +276,7 @@ texte libre.
+- - BEAUCOUP plus courte que le premier email (60-80 mots maximum).
+- - Fait naturellement référence au message précédent sans le paraphraser.
+- - Apporte un angle NOUVEAU (un bénéfice concret, une question directe,
+--  une info utile) — jamais un simple "je me permets de revenir vers vous".
+-+  une info utile), jamais un simple "je me permets de revenir vers vous".
+- - Aucune culpabilisation, aucun reproche de non-réponse.
+- - Se termine par une question simple à laquelle il est facile de répondre.
+- - L'objet reprend le fil : "Re: <objet initial>" si un objet initial est
+-@@ -286,7 +296,7 @@ Proposition de valeur : {produit.get('proposition_de_valeur', '')}
+-     bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
+-     if contexte_batch and contexte_batch.strip():
+-         bloc_lot = f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
+--lancé cette génération — à prendre en compte en priorité)
+-+lancé cette génération, à prendre en compte en priorité)
+- {contexte_batch.strip()}"""
+- 
+-     return [
+-@@ -298,11 +308,11 @@ lancé cette génération — à prendre en compte en priorité)
+- def build_prompt_relance(prospect: dict, premier_email: str) -> str:
+-     """Partie propre à ce prospect — jamais mise en cache."""
+-     return f"""# Ce prospect
+--{prospect.get('prenom', '')} {prospect.get('nom', '')} — {prospect.get('poste', '')} chez {prospect.get('entreprise', '')}
+-+{prospect.get('prenom', '')} {prospect.get('nom', '')}, {prospect.get('poste', '')} chez {prospect.get('entreprise', '')}
+- Relances déjà envoyées : {prospect.get('nb_relances', 0)}
+- 
+- # Premier email envoyé (pour référence, ne pas le répéter)
+--{premier_email or '(contenu du premier email non disponible — reste générique sur la référence au message précédent)'}"""
+-+{premier_email or "(contenu du premier email non disponible, reste générique sur la référence au message précédent)"}"""
+- 
+- 
+- NIVEAUX_REFLEXION = {"desactive": None, "faible": "low", "normal": "medium", "approfondi": "high"}
+-diff --git a/dashboard/app.py b/dashboard/app.py
+-index ab6a014..f589816 100644
+---- a/dashboard/app.py
+-+++ b/dashboard/app.py
+-@@ -265,10 +265,21 @@ def envoi():
+-     selection = db.list_prospects_pour_selection(profil)
+-     postes = sorted({p["poste"] for p in selection if p.get("poste")})
+- 
+-+    # Même logique que /parametres pour retrouver le nom du niveau
+-+    # correspondant à la valeur numérique enregistrée — sans ça, le
+-+    # sélecteur de cette page ignorait le réglage de Paramètres et
+-+    # présélectionnait toujours "normal" en dur, quoi qu'on ait configuré.
+-+    valeur_recherche = int(db.get_reglage("max_recherches_web") or 3)
+-+    niveau_recherche_defaut = next(
+-+        (nom for nom, val in email_sender.NIVEAUX_RECHERCHE.items() if val == valeur_recherche),
+-+        "normal",
+-+    )
+-+
+-     return render_template("envoi.html", avec_brouillon=actifs, mis_de_cote=de_cote, sans_brouillon=sans,
+-                            quota_restant=_quota_restant(), actif="envoi",
+-                            selection=selection, postes=postes, statuts=STATUTS,
+-                            niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
+-+                           niveau_recherche_defaut=niveau_recherche_defaut,
+-                            modeles=profils.load_modeles(profil))
+- 
+- 
+-diff --git a/dashboard/templates/envoi.html b/dashboard/templates/envoi.html
+-index a655f32..cb727be 100644
+---- a/dashboard/templates/envoi.html
+-+++ b/dashboard/templates/envoi.html
+-@@ -20,7 +20,7 @@
+-             <label for="niveau-recherche">Niveau de recherche web</label>
+-             <select id="niveau-recherche">
+-                 {% for nom in niveaux_recherche %}
+--                <option value="{{ nom }}" {% if loop.index0 == 2 %}selected{% endif %}>{{ nom | capitalize }}</option>
+-+                <option value="{{ nom }}" {% if nom == niveau_recherche_defaut %}selected{% endif %}>{{ nom | capitalize }}</option>
+-                 {% endfor %}
+-             </select>
+-         </div>
+diff --git a/prosp-pipeline-suppr-optim.patch b/prosp-pipeline-suppr-optim.patch
+deleted file mode 100644
+index aaed986..0000000
+--- a/prosp-pipeline-suppr-optim.patch
++++ /dev/null
+@@ -1,186 +0,0 @@
+-diff --git a/README.md b/README.md
+-index 7cd9fa1..aea2c2d 100644
+---- a/README.md
+-+++ b/README.md
+-@@ -33,9 +33,11 @@ ouvrent directement le navigateur sur l'interface.
+- 
+- - **Pipeline** (`/`) — barre de pipeline cliquable par statut, table triable
+-   (clic sur les en-têtes), recherche instantanée, changement de statut
+--  directement dans la liste. Boutons « Qualifier les nouveaux » et
+--  « Vérifier les réponses » : tout tourne en arrière-plan avec une barre de
+--  progression et un bouton **Annuler**, la page ne gèle plus jamais.
+-+  directement dans la liste. Cases à cocher pour une **sélection précise** :
+-+  qualifier ou **supprimer** exactement les prospects choisis, en plus des
+-+  boutons "Qualifier les nouveaux" et "Vérifier les réponses" qui tournent
+-+  en arrière-plan avec une barre de progression et un bouton **Annuler** —
+-+  la page ne gèle plus jamais.
+- - **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
+-   libre) en haut, puis trois onglets cliquables :
+-   - **Brouillons** — prêts à relire/envoyer/programmer, en liste compacte
+-diff --git a/dashboard/app.py b/dashboard/app.py
+-index f589816..bdc4ce5 100644
+---- a/dashboard/app.py
+-+++ b/dashboard/app.py
+-@@ -241,20 +241,17 @@ def detail(prospect_id: int):
+- @app.route("/envoi")
+- def envoi():
+-     profil = db.profil_actif()
+--    brouillons = db.list_brouillons()
+- 
+-     # Brouillons déjà créés : n'importe quel statut de qualification (écrire
+-     # à la main n'exige pas d'être "qualifie" — seule la génération IA en
+--    # masse ci-dessous reste liée aux qualifiés). Scopé au profil actif :
+--    # list_brouillons() n'est pas filtrée par profil elle-même. Séparés en
+--    # deux : actifs (à traiter maintenant) et mis de côté ("Passer" ne
+--    # supprime plus rien, juste range ailleurs pour ne pas perdre le texte).
+--    actifs, de_cote = [], []
+--    for prospect_id, brouillon in brouillons.items():
+--        p = db.get_prospect(prospect_id)
+--        if p and p.get("profil") == profil and p.get("email"):
+--            p["brouillon"] = brouillon
+--            (de_cote if brouillon.get("mis_de_cote") else actifs).append(p)
+-+    # masse ci-dessous reste liée aux qualifiés). Une seule requête jointe,
+-+    # déjà scopée au profil et filtrée sur l'email — pas de boucle avec un
+-+    # get_prospect() par brouillon. Séparés en deux : actifs (à traiter
+-+    # maintenant) et mis de côté ("Passer" ne supprime plus rien, juste
+-+    # range ailleurs pour ne pas perdre le texte).
+-+    prospects_avec_brouillon = db.list_prospects_avec_brouillon(profil)
+-+    actifs = [p for p in prospects_avec_brouillon if not p["brouillon"].get("mis_de_cote")]
+-+    de_cote = [p for p in prospects_avec_brouillon if p["brouillon"].get("mis_de_cote")]
+-     actifs.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+-     de_cote.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+-     ids_avec_brouillon = {p["id"] for p in actifs + de_cote}
+-@@ -386,7 +383,7 @@ def api_qualifier():
+-         # Sélection sur mesure : n'importe quel statut, désinscrit exclu —
+-         # utile pour requalifier quelqu'un après une mise à jour de l'ICP
+-         # ou de sa fiche, pas seulement les tout nouveaux.
+--        a_qualifier = [db.get_prospect(i) for i in ids]
+-+        a_qualifier = db.get_prospects(ids)
+-         a_qualifier = [p for p in a_qualifier if p and p.get("profil") == profil
+-                       and p["statut"] != "desinscrit"]
+-         if not a_qualifier:
+-@@ -467,7 +464,7 @@ def api_generer_brouillons():
+-         # l'email serait alors rédigé avec l'ICP/le brief/la signature du
+-         # mauvais profil (fuite de contenu d'un profil vers les prospects
+-         # d'un autre). On refuse ces prospects plutôt que de mal les traiter.
+--        candidats = [db.get_prospect(i) for i in ids]
+-+        candidats = db.get_prospects(ids)
+-         candidats = [p for p in candidats if p and p.get("profil") == profil
+-                     and p["statut"] != "desinscrit"
+-                     and p.get("email") and p["id"] not in brouillons]
+-diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+-index 971171b..89c109a 100644
+---- a/dashboard/static/app.js
+-+++ b/dashboard/static/app.js
+-@@ -292,6 +292,20 @@ function majCompteurSelectionPipeline() {
+-   const cochees = document.querySelectorAll("#table-prospects .case-selection-pipeline:checked").length;
+-   document.getElementById("compteur-selection-pipeline").textContent = cochees;
+-   document.getElementById("bouton-qualifier-selection").disabled = cochees === 0;
+-+  const compteurSuppr = document.getElementById("compteur-selection-pipeline-suppr");
+-+  const boutonSuppr = document.getElementById("bouton-supprimer-selection-pipeline");
+-+  if (compteurSuppr) compteurSuppr.textContent = cochees;
+-+  if (boutonSuppr) boutonSuppr.disabled = cochees === 0;
+-+}
+-+
+-+async function supprimerSelectionPipeline(bouton) {
+-+  const ids = Array.from(document.querySelectorAll("#table-prospects .case-selection-pipeline:checked"))
+-+    .map((c) => parseInt(c.value, 10));
+-+  if (!ids.length) return;
+-+  if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
+-+  bouton.disabled = true;
+-+  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
+-+  if (!donnees) bouton.disabled = false;
+- }
+- 
+- async function qualifierSelectionPipeline(bouton) {
+-diff --git a/dashboard/templates/index.html b/dashboard/templates/index.html
+-index 5bfc2e8..7d626b3 100644
+---- a/dashboard/templates/index.html
+-+++ b/dashboard/templates/index.html
+-@@ -15,6 +15,9 @@
+-         <button id="bouton-qualifier-selection" onclick="qualifierSelectionPipeline(this)" disabled>
+-             Qualifier la sélection (<span id="compteur-selection-pipeline">0</span>)
+-         </button>
+-+        <button class="danger" id="bouton-supprimer-selection-pipeline" onclick="supprimerSelectionPipeline(this)" disabled>
+-+            Supprimer la sélection (<span id="compteur-selection-pipeline-suppr">0</span>)
+-+        </button>
+-         <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
+-             Vérifier les réponses
+-         </button>
+-@@ -79,7 +82,7 @@
+-         {% for p in prospects %}
+-         <tr data-recherche="{{ (p.prenom ~ ' ' ~ p.nom ~ ' ' ~ (p.entreprise or '') ~ ' ' ~ (p.poste or '') ~ ' ' ~ (p.email or '')) | lower }}"
+-             onclick="if (!['SELECT','OPTION','INPUT'].includes(event.target.tagName)) window.location='/prospect/{{ p.id }}'">
+--            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()" {% if p.statut == 'desinscrit' %}disabled{% endif %}></td>
+-+            <td><input type="checkbox" class="case-selection-pipeline" value="{{ p.id }}" onchange="majCompteurSelectionPipeline()"></td>
+-             <td><strong>{{ p.prenom }} {{ p.nom }}</strong></td>
+-             <td>{{ p.entreprise or '—' }}</td>
+-             <td class="silencieux">{{ p.poste or '—' }}</td>
+-diff --git a/db/database.py b/db/database.py
+-index 68751be..f8263fc 100644
+---- a/db/database.py
+-+++ b/db/database.py
+-@@ -177,6 +177,19 @@ def get_prospect(prospect_id: int, db_path: Path = DB_PATH) -> dict | None:
+-         return dict(row) if row else None
+- 
+- 
+-+def get_prospects(ids: list[int], db_path: Path = DB_PATH) -> list[dict]:
+-+    """Récupère plusieurs prospects par leurs ids en une seule requête,
+-+    plutôt qu'un get_prospect() par id dans une boucle — utile pour les
+-+    sélections sur mesure (qualification, génération) où l'appelant a déjà
+-+    une liste d'ids issue de cases cochées."""
+-+    if not ids:
+-+        return []
+-+    with get_connection(db_path) as conn:
+-+        marqueurs = ",".join("?" * len(ids))
+-+        rows = conn.execute(f"SELECT * FROM prospects WHERE id IN ({marqueurs})", list(ids)).fetchall()
+-+        return [dict(r) for r in rows]
+-+
+-+
+- def update_prospect(prospect_id: int, data: dict, db_path: Path = DB_PATH) -> None:
+-     """Met à jour les champs éditables d'un prospect (fiche)."""
+-     data = {k: v for k, v in data.items() if k in CHAMPS_PROSPECT}
+-@@ -493,6 +506,43 @@ def list_brouillons(db_path: Path = DB_PATH) -> dict:
+-         return {r["prospect_id"]: dict(r) for r in rows}
+- 
+- 
+-+def list_prospects_avec_brouillon(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+-+    """Prospects du profil qui ont un brouillon (avec email), chacun avec
+-+    son brouillon déjà attaché sous p['brouillon'] — une seule requête
+-+    jointe, plutôt que de récupérer TOUS les brouillons tous profils
+-+    confondus puis faire un get_prospect() individuel par brouillon avant
+-+    de filtrer (l'ancienne approche de /envoi : 1 + N requêtes au lieu
+-+    d'une seule, la plupart jetées après coup car d'un autre profil)."""
+-+    with get_connection(db_path) as conn:
+-+        rows = conn.execute(
+-+            """SELECT p.*,
+-+                      b.objet AS b_objet, b.corps AS b_corps, b.type AS b_type,
+-+                      b.tokens_entree AS b_tokens_entree, b.tokens_sortie AS b_tokens_sortie,
+-+                      b.recherches_web AS b_recherches_web,
+-+                      b.date_envoi_prevue AS b_date_envoi_prevue, b.mis_de_cote AS b_mis_de_cote
+-+               FROM prospects p
+-+               JOIN brouillons b ON b.prospect_id = p.id
+-+               WHERE p.profil = ? AND p.email IS NOT NULL AND p.email != ''""",
+-+            (profil,),
+-+        ).fetchall()
+-+        resultats = []
+-+        for r in rows:
+-+            d = dict(r)
+-+            d["brouillon"] = {
+-+                "prospect_id": d["id"],
+-+                "objet": d.pop("b_objet"),
+-+                "corps": d.pop("b_corps"),
+-+                "type": d.pop("b_type"),
+-+                "tokens_entree": d.pop("b_tokens_entree"),
+-+                "tokens_sortie": d.pop("b_tokens_sortie"),
+-+                "recherches_web": d.pop("b_recherches_web"),
+-+                "date_envoi_prevue": d.pop("b_date_envoi_prevue"),
+-+                "mis_de_cote": d.pop("b_mis_de_cote"),
+-+            }
+-+            resultats.append(d)
+-+        return resultats
+-+
+-+
+- # ---------------------------------------------------------------- quota & relances
+- 
+- def envois_du_jour(db_path: Path = DB_PATH) -> int:
+diff --git a/requirements.txt b/requirements.txt
+index cfb0dc4..1924ca4 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,8 +1,8 @@
+-anthropic>=0.40.0
+-pyyaml>=6.0
+-python-dotenv>=1.0
+-google-auth-oauthlib>=1.2.0
+-google-api-python-client>=2.100.0
+-google-auth-httplib2>=0.2.0
+-flask>=3.0.0
+-dnspython>=2.6.0
++anthropic~=0.121.0
++pyyaml~=6.0.3
++python-dotenv~=1.2.2
++google-auth-oauthlib~=1.4.0
++google-api-python-client~=2.198.0
++google-auth-httplib2~=0.4.1
++flask~=3.1.3
++dnspython~=2.8.0

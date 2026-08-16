@@ -781,11 +781,3 @@ def list_brouillons_programmes_dus(db_path: Path = DB_PATH) -> list[dict]:
             "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime')"
         ).fetchall()
         return [dict(r) for r in rows]
-
-
-def set_getsales_lead_uuid(prospect_id: int, lead_uuid: str, db_path: Path = DB_PATH) -> None:
-    with get_connection(db_path) as conn:
-        conn.execute(
-            "UPDATE prospects SET getsales_lead_uuid = ? WHERE id = ?",
-            (lead_uuid, prospect_id),
-        )
