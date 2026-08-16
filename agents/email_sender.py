@@ -504,9 +504,10 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
             # moment de l'appel : un envoi programmé part en arrière-plan,
             # potentiellement pendant qu'un AUTRE profil est affiché à l'écran.
             service = gmail_client.get_service(prospect.get("profil"))
+        chemin_sig = profils.chemin_signature(prospect.get("profil") or db.profil_actif())
         reponse_envoi = gmail_client.send_message(
             service, prospect["email"], brouillon["objet"], brouillon["corps"],
-            thread_id=thread_id, in_reply_to=rfc_id,
+            thread_id=thread_id, in_reply_to=rfc_id, chemin_signature=chemin_sig,
         )
 
     # Fil du message qu'on vient d'envoyer. Pour un premier email, ça devient

@@ -144,6 +144,42 @@ def chemin_modeles(profil: str) -> Path:
     return PROFILS_DIR / profil / "modeles.yaml"
 
 
+EXTENSIONS_SIGNATURE = ("png", "jpg", "jpeg", "gif")
+
+
+def chemin_signature(profil: str) -> Path | None:
+    """Chemin de l'image de signature du profil, si elle existe — n'importe
+    quelle extension d'image courante, l'extension d'origine est conservée
+    (déterminant le bon type MIME à l'envoi)."""
+    dossier = PROFILS_DIR / profil
+    for ext in EXTENSIONS_SIGNATURE:
+        chemin = dossier / f"signature.{ext}"
+        if chemin.exists():
+            return chemin
+    return None
+
+
+def supprimer_signature(profil: str) -> None:
+    chemin = chemin_signature(profil)
+    if chemin:
+        chemin.unlink()
+
+
+def sauver_signature(profil: str, donnees: bytes, extension: str) -> None:
+    """Remplace la signature du profil. Supprime d'abord l'ancienne (son
+    extension a pu être différente d'un upload à l'autre — sinon les deux
+    fichiers coexisteraient et chemin_signature() prendrait toujours le
+    même par ordre de recherche, laissant l'autre orphelin sur le disque)."""
+    extension = extension.lower().lstrip(".")
+    if extension not in EXTENSIONS_SIGNATURE:
+        raise ValueError(f"Format d'image non supporté : .{extension} "
+                         f"(formats acceptés : {', '.join(EXTENSIONS_SIGNATURE)}).")
+    supprimer_signature(profil)
+    dossier = PROFILS_DIR / profil
+    dossier.mkdir(parents=True, exist_ok=True)
+    (dossier / f"signature.{extension}").write_bytes(donnees)
+
+
 def load_icp(profil: str) -> dict:
     init_profils()
     with open(chemin_icp(profil), encoding="utf-8") as f:

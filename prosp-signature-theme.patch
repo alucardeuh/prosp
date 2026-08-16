@@ -1,0 +1,310 @@
+diff --git a/README.md b/README.md
+index 99f2535..d25224c 100644
+--- a/README.md
++++ b/README.md
+@@ -81,7 +81,9 @@ ouvrent directement le navigateur sur l'interface.
+ - **Paramètres** (`/parametres`) — en tête de page, la **clé API Anthropic**
+   et les modèles Claude utilisés, puis les **connexions** (Gmail, HubSpot,
+   propres à chaque profil) pilotables entièrement depuis le navigateur ;
+-  puis ICP, ton des emails, limites d'envoi, délai/nombre de relances,
++  puis ICP, ton des emails, **signature visuelle** (image ajoutée
++  automatiquement sous chaque email envoyé — repli en texte simple si
++  aucune n'est configurée), limites d'envoi, délai/nombre de relances,
+   création de profils.
+ - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
+   éditables, notes de suivi horodatées, historique complet avec tokens
+diff --git a/agents/email_sender.py b/agents/email_sender.py
+index e5b4988..2d2b0f3 100644
+--- a/agents/email_sender.py
++++ b/agents/email_sender.py
+@@ -504,9 +504,10 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) ->
+             # moment de l'appel : un envoi programmé part en arrière-plan,
+             # potentiellement pendant qu'un AUTRE profil est affiché à l'écran.
+             service = gmail_client.get_service(prospect.get("profil"))
++        chemin_sig = profils.chemin_signature(prospect.get("profil") or db.profil_actif())
+         reponse_envoi = gmail_client.send_message(
+             service, prospect["email"], brouillon["objet"], brouillon["corps"],
+-            thread_id=thread_id, in_reply_to=rfc_id,
++            thread_id=thread_id, in_reply_to=rfc_id, chemin_signature=chemin_sig,
+         )
+ 
+     # Fil du message qu'on vient d'envoyer. Pour un premier email, ça devient
+diff --git a/dashboard/app.py b/dashboard/app.py
+index 2c457a8..5033b6b 100644
+--- a/dashboard/app.py
++++ b/dashboard/app.py
+@@ -75,7 +75,7 @@ def _definir_env(cle: str, valeur: str) -> None:
+ 
+ 
+ from flask import (
+-    Flask, abort, flash, jsonify, redirect, render_template, request, url_for,
++    Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
+ )
+ 
+ sys.path.insert(0, str(Path(__file__).parent.parent))
+@@ -346,6 +346,7 @@ def parametres():
+                            niveaux_recherche=email_sender.NIVEAUX_RECHERCHE,
+                            statut_gmail=_statut_gmail(profil), statut_hubspot=_statut_hubspot(profil),
+                            profil_connexions=profil, anthropic=anthropic_config,
++                           a_une_signature=bool(profils.chemin_signature(profil)),
+                            actif="parametres")
+ 
+ 
+@@ -853,6 +854,37 @@ def parametres_brief():
+     return redirect(url_for("parametres"))
+ 
+ 
++@app.route("/parametres/signature", methods=["POST"])
++def parametres_signature():
++    profil = db.profil_actif()
++    fichier = request.files.get("fichier")
++    if not fichier or fichier.filename == "":
++        flash("Aucune image sélectionnée.", "erreur")
++        return redirect(url_for("parametres"))
++    extension = fichier.filename.rsplit(".", 1)[-1] if "." in fichier.filename else ""
++    try:
++        profils.sauver_signature(profil, fichier.read(), extension)
++        flash("Signature enregistrée — incluse automatiquement dans tes prochains envois.", "succes")
++    except ValueError as exc:
++        flash(str(exc), "erreur")
++    return redirect(url_for("parametres"))
++
++
++@app.route("/parametres/signature/supprimer", methods=["POST"])
++def parametres_supprimer_signature():
++    profils.supprimer_signature(db.profil_actif())
++    flash("Signature retirée — tes prochains envois repartent en texte simple.", "succes")
++    return redirect(url_for("parametres"))
++
++
++@app.route("/parametres/signature/apercu")
++def parametres_apercu_signature():
++    chemin = profils.chemin_signature(db.profil_actif())
++    if not chemin:
++        return "", 404
++    return send_file(chemin)
++
++
+ @app.route("/parametres/reglages", methods=["POST"])
+ def parametres_reglages():
+     for cle, defaut in (
+diff --git a/dashboard/static/app.css b/dashboard/static/app.css
+index 46481ff..7659376 100644
+--- a/dashboard/static/app.css
++++ b/dashboard/static/app.css
+@@ -45,16 +45,13 @@
+    mauvais thème au chargement.
+    ============================================================ */
+ [data-tema="sombre"] {
+-  --paper: #0e1526;
+-  --card: #161f38;
+-  --ink: #e8ecf6;
+-  --dim: #9fabc9;
+-  --faint: #6b7796;
+-  --line: #263255;
+-  --line-strong: #34426e;
+-
+-  --line: #3f4f80;
+-  --line-strong: #546ab5;
++  --paper: #121212;
++  --card: #1e1e1e;
++  --ink: #e8e8e8;
++  --dim: #a3a3a3;
++  --faint: #707070;
++  --line: #2e2e2e;
++  --line-strong: #454545;
+ 
+   --pine: #2fd0a0;
+   --pine-deep: #24b58c;
+@@ -66,15 +63,19 @@
+   --sky: #6fa8f5;
+   --sky-soft: #16233d;
+ 
+-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 20px rgba(0, 0, 0, 0.4);
++  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 4px 20px rgba(0, 0, 0, 0.5);
+ }
+ 
++/* Contrastes recalculés pour la palette noir/gris (WCAG, sur fond --paper
++   #121212) : --ink 15.45:1, --dim 7.52:1 — tous deux largement au-dessus
++   du minimum AA (4.5:1), --ink dépasse même le AAA (7:1). */
++
+ /* Le vert --pine est clair en mode sombre (pour bien ressortir comme accent
+    de texte sur les cartes) — un bouton plein avec du texte BLANC dessus
+    serait donc peu lisible (contraste ~2:1). Texte foncé à la place,
+    uniquement dans ce cas précis. */
+ [data-tema="sombre"] button.primaire,
+-[data-tema="sombre"] .btn.primaire { color: #0e1526; }
++[data-tema="sombre"] .btn.primaire { color: var(--paper); }
+ 
+ * { box-sizing: border-box; }
+ html { -webkit-text-size-adjust: 100%; }
+diff --git a/dashboard/templates/parametres.html b/dashboard/templates/parametres.html
+index 2d53a12..328555f 100644
+--- a/dashboard/templates/parametres.html
++++ b/dashboard/templates/parametres.html
+@@ -220,6 +220,34 @@
+             </form>
+         </div>
+ 
++        <div class="carte">
++            <h2>Signature visuelle (profil actif)</h2>
++            <p class="aide">
++                Une image (bannière, logo, signature de campagne...) ajoutée
++                automatiquement sous le texte de chaque email envoyé depuis ce
++                profil — premiers emails et relances. Sans elle, tes emails
++                repartent en texte simple comme avant.
++            </p>
++            {% if a_une_signature %}
++            <div style="margin-top:12px">
++                <img src="/parametres/signature/apercu?_={{ range(1,99999)|random }}" alt="Signature actuelle"
++                     style="max-width:320px; display:block; border:1px solid var(--line); border-radius:8px; padding:8px; background:#fff">
++            </div>
++            <form method="post" action="/parametres/signature/supprimer" style="margin-top:12px">
++                <button type="submit" class="danger" onclick="return confirm('Retirer la signature ? Les prochains envois repartiront en texte simple.')">Retirer la signature</button>
++            </form>
++            <p class="aide" style="margin-top:14px">Remplacer par une autre image :</p>
++            {% else %}
++            <p class="aide" style="margin-top:10px">Aucune signature configurée pour ce profil.</p>
++            {% endif %}
++            <form method="post" action="/parametres/signature" enctype="multipart/form-data" style="margin-top:10px">
++                <input type="file" name="fichier" accept=".png,.jpg,.jpeg,.gif" required>
++                <div class="rangee-boutons" style="margin-top:12px">
++                    <button type="submit" class="primaire">{{ 'Remplacer' if a_une_signature else 'Ajouter la signature' }}</button>
++                </div>
++            </form>
++        </div>
++
+         <div class="carte">
+             <h2>Limites et relances</h2>
+             <form method="post" action="/parametres/reglages">
+diff --git a/integrations/gmail_client.py b/integrations/gmail_client.py
+index c679a45..be89239 100644
+--- a/integrations/gmail_client.py
++++ b/integrations/gmail_client.py
+@@ -21,6 +21,9 @@ pour ré-autoriser avec le nouveau scope d'envoi inclus.
+ from __future__ import annotations
+ 
+ import base64
++import html
++from email.mime.image import MIMEImage
++from email.mime.multipart import MIMEMultipart
+ from email.mime.text import MIMEText
+ from pathlib import Path
+ 
+@@ -155,20 +158,62 @@ def _decode(data: str) -> str:
+     return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
+ 
+ 
++def _construire_message_avec_signature(to_email: str, subject: str, body_text: str,
++                                       chemin_image: Path) -> MIMEMultipart:
++    """multipart/related contenant un multipart/alternative (texte brut +
++    HTML) et l'image de signature en pièce jointe inline référencée par
++    Content-ID. Le texte brut reste présent en repli pour les clients mail
++    qui n'affichent pas le HTML — et parce qu'un email HTML sans
++    alternative texte est un signal négatif de plus pour les filtres anti-spam."""
++    message = MIMEMultipart("related")
++    message["to"] = to_email
++    message["subject"] = subject
++
++    alternative = MIMEMultipart("alternative")
++    alternative.attach(MIMEText(body_text, "plain"))
++
++    corps_html = html.escape(body_text).replace("\n", "<br>")
++    html_complet = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #1a1a1a;">
++<div>{corps_html}</div>
++<br>
++<img src="cid:signature_image" alt="" style="max-width: 500px; display: block; border: 0;">
++</body></html>"""
++    alternative.attach(MIMEText(html_complet, "html"))
++    message.attach(alternative)
++
++    sous_type = chemin_image.suffix.lstrip(".").lower()
++    if sous_type == "jpg":
++        sous_type = "jpeg"
++    image = MIMEImage(chemin_image.read_bytes(), _subtype=sous_type)
++    image.add_header("Content-ID", "<signature_image>")
++    image.add_header("Content-Disposition", "inline", filename=chemin_image.name)
++    message.attach(image)
++
++    return message
++
++
+ def send_message(service, to_email: str, subject: str, body_text: str,
+-                 thread_id: str | None = None, in_reply_to: str | None = None) -> dict:
+-    """Envoie un email texte brut. Ne fait AUCUNE vérification métier
+-    (validation humaine, désinscription...) — c'est la responsabilité de
+-    l'appelant (agents/email_sender.py) de s'en assurer avant d'appeler ceci.
++                 thread_id: str | None = None, in_reply_to: str | None = None,
++                 chemin_signature: Path | None = None) -> dict:
++    """Envoie un email. Ne fait AUCUNE vérification métier (validation
++    humaine, désinscription...) — c'est la responsabilité de l'appelant
++    (agents/email_sender.py) de s'en assurer avant d'appeler ceci.
++
++    chemin_signature (optionnel) : image à intégrer sous le texte de
++    l'email (multipart HTML + repli texte brut). Sans elle, l'email reste
++    en texte brut simple, comme avant.
+ 
+     thread_id / in_reply_to (optionnels) rattachent l'email à un fil Gmail
+     existant — utilisé pour les relances, afin qu'elles arrivent comme la
+     suite du premier message plutôt que comme un email tout neuf dans la
+     boîte du prospect. in_reply_to doit être l'en-tête Message-ID (RFC) du
+     message auquel on répond, récupérable via get_rfc_message_id()."""
+-    message = MIMEText(body_text)
+-    message["to"] = to_email
+-    message["subject"] = subject
++    if chemin_signature and chemin_signature.exists():
++        message = _construire_message_avec_signature(to_email, subject, body_text, chemin_signature)
++    else:
++        message = MIMEText(body_text)
++        message["to"] = to_email
++        message["subject"] = subject
+     if in_reply_to:
+         message["In-Reply-To"] = in_reply_to
+         message["References"] = in_reply_to
+diff --git a/profils.py b/profils.py
+index c262eda..b2900ca 100644
+--- a/profils.py
++++ b/profils.py
+@@ -144,6 +144,42 @@ def chemin_modeles(profil: str) -> Path:
+     return PROFILS_DIR / profil / "modeles.yaml"
+ 
+ 
++EXTENSIONS_SIGNATURE = ("png", "jpg", "jpeg", "gif")
++
++
++def chemin_signature(profil: str) -> Path | None:
++    """Chemin de l'image de signature du profil, si elle existe — n'importe
++    quelle extension d'image courante, l'extension d'origine est conservée
++    (déterminant le bon type MIME à l'envoi)."""
++    dossier = PROFILS_DIR / profil
++    for ext in EXTENSIONS_SIGNATURE:
++        chemin = dossier / f"signature.{ext}"
++        if chemin.exists():
++            return chemin
++    return None
++
++
++def supprimer_signature(profil: str) -> None:
++    chemin = chemin_signature(profil)
++    if chemin:
++        chemin.unlink()
++
++
++def sauver_signature(profil: str, donnees: bytes, extension: str) -> None:
++    """Remplace la signature du profil. Supprime d'abord l'ancienne (son
++    extension a pu être différente d'un upload à l'autre — sinon les deux
++    fichiers coexisteraient et chemin_signature() prendrait toujours le
++    même par ordre de recherche, laissant l'autre orphelin sur le disque)."""
++    extension = extension.lower().lstrip(".")
++    if extension not in EXTENSIONS_SIGNATURE:
++        raise ValueError(f"Format d'image non supporté : .{extension} "
++                         f"(formats acceptés : {', '.join(EXTENSIONS_SIGNATURE)}).")
++    supprimer_signature(profil)
++    dossier = PROFILS_DIR / profil
++    dossier.mkdir(parents=True, exist_ok=True)
++    (dossier / f"signature.{extension}").write_bytes(donnees)
++
++
+ def load_icp(profil: str) -> dict:
+     init_profils()
+     with open(chemin_icp(profil), encoding="utf-8") as f:

@@ -221,6 +221,34 @@
         </div>
 
         <div class="carte">
+            <h2>Signature visuelle (profil actif)</h2>
+            <p class="aide">
+                Une image (bannière, logo, signature de campagne...) ajoutée
+                automatiquement sous le texte de chaque email envoyé depuis ce
+                profil — premiers emails et relances. Sans elle, tes emails
+                repartent en texte simple comme avant.
+            </p>
+            {% if a_une_signature %}
+            <div style="margin-top:12px">
+                <img src="/parametres/signature/apercu?_={{ range(1,99999)|random }}" alt="Signature actuelle"
+                     style="max-width:320px; display:block; border:1px solid var(--line); border-radius:8px; padding:8px; background:#fff">
+            </div>
+            <form method="post" action="/parametres/signature/supprimer" style="margin-top:12px">
+                <button type="submit" class="danger" onclick="return confirm('Retirer la signature ? Les prochains envois repartiront en texte simple.')">Retirer la signature</button>
+            </form>
+            <p class="aide" style="margin-top:14px">Remplacer par une autre image :</p>
+            {% else %}
+            <p class="aide" style="margin-top:10px">Aucune signature configurée pour ce profil.</p>
+            {% endif %}
+            <form method="post" action="/parametres/signature" enctype="multipart/form-data" style="margin-top:10px">
+                <input type="file" name="fichier" accept=".png,.jpg,.jpeg,.gif" required>
+                <div class="rangee-boutons" style="margin-top:12px">
+                    <button type="submit" class="primaire">{{ 'Remplacer' if a_une_signature else 'Ajouter la signature' }}</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="carte">
             <h2>Limites et relances</h2>
             <form method="post" action="/parametres/reglages">
                 <label for="limite_envois_jour">Envois max par jour, tous profils confondus (premiers emails + relances)</label>

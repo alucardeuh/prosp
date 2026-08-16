@@ -45,16 +45,13 @@
    mauvais thème au chargement.
    ============================================================ */
 [data-tema="sombre"] {
-  --paper: #0e1526;
-  --card: #161f38;
-  --ink: #e8ecf6;
-  --dim: #9fabc9;
-  --faint: #6b7796;
-  --line: #263255;
-  --line-strong: #34426e;
-
-  --line: #3f4f80;
-  --line-strong: #546ab5;
+  --paper: #121212;
+  --card: #1e1e1e;
+  --ink: #e8e8e8;
+  --dim: #a3a3a3;
+  --faint: #707070;
+  --line: #2e2e2e;
+  --line-strong: #454545;
 
   --pine: #2fd0a0;
   --pine-deep: #24b58c;
@@ -66,15 +63,19 @@
   --sky: #6fa8f5;
   --sky-soft: #16233d;
 
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 4px 20px rgba(0, 0, 0, 0.4);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 4px 20px rgba(0, 0, 0, 0.5);
 }
+
+/* Contrastes recalculés pour la palette noir/gris (WCAG, sur fond --paper
+   #121212) : --ink 15.45:1, --dim 7.52:1 — tous deux largement au-dessus
+   du minimum AA (4.5:1), --ink dépasse même le AAA (7:1). */
 
 /* Le vert --pine est clair en mode sombre (pour bien ressortir comme accent
    de texte sur les cartes) — un bouton plein avec du texte BLANC dessus
    serait donc peu lisible (contraste ~2:1). Texte foncé à la place,
    uniquement dans ce cas précis. */
 [data-tema="sombre"] button.primaire,
-[data-tema="sombre"] .btn.primaire { color: #0e1526; }
+[data-tema="sombre"] .btn.primaire { color: var(--paper); }
 
 * { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; }

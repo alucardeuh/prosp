@@ -21,6 +21,9 @@ pour ré-autoriser avec le nouveau scope d'envoi inclus.
 from __future__ import annotations
 
 import base64
+import html
+from email.mime.image import MIMEImage
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
@@ -155,20 +158,62 @@ def _decode(data: str) -> str:
     return base64.urlsafe_b64decode(data.encode("utf-8")).decode("utf-8", errors="replace")
 
 
+def _construire_message_avec_signature(to_email: str, subject: str, body_text: str,
+                                       chemin_image: Path) -> MIMEMultipart:
+    """multipart/related contenant un multipart/alternative (texte brut +
+    HTML) et l'image de signature en pièce jointe inline référencée par
+    Content-ID. Le texte brut reste présent en repli pour les clients mail
+    qui n'affichent pas le HTML — et parce qu'un email HTML sans
+    alternative texte est un signal négatif de plus pour les filtres anti-spam."""
+    message = MIMEMultipart("related")
+    message["to"] = to_email
+    message["subject"] = subject
+
+    alternative = MIMEMultipart("alternative")
+    alternative.attach(MIMEText(body_text, "plain"))
+
+    corps_html = html.escape(body_text).replace("\n", "<br>")
+    html_complet = f"""<html><body style="font-family: Arial, sans-serif; font-size: 14px; color: #1a1a1a;">
+<div>{corps_html}</div>
+<br>
+<img src="cid:signature_image" alt="" style="max-width: 500px; display: block; border: 0;">
+</body></html>"""
+    alternative.attach(MIMEText(html_complet, "html"))
+    message.attach(alternative)
+
+    sous_type = chemin_image.suffix.lstrip(".").lower()
+    if sous_type == "jpg":
+        sous_type = "jpeg"
+    image = MIMEImage(chemin_image.read_bytes(), _subtype=sous_type)
+    image.add_header("Content-ID", "<signature_image>")
+    image.add_header("Content-Disposition", "inline", filename=chemin_image.name)
+    message.attach(image)
+
+    return message
+
+
 def send_message(service, to_email: str, subject: str, body_text: str,
-                 thread_id: str | None = None, in_reply_to: str | None = None) -> dict:
-    """Envoie un email texte brut. Ne fait AUCUNE vérification métier
-    (validation humaine, désinscription...) — c'est la responsabilité de
-    l'appelant (agents/email_sender.py) de s'en assurer avant d'appeler ceci.
+                 thread_id: str | None = None, in_reply_to: str | None = None,
+                 chemin_signature: Path | None = None) -> dict:
+    """Envoie un email. Ne fait AUCUNE vérification métier (validation
+    humaine, désinscription...) — c'est la responsabilité de l'appelant
+    (agents/email_sender.py) de s'en assurer avant d'appeler ceci.
+
+    chemin_signature (optionnel) : image à intégrer sous le texte de
+    l'email (multipart HTML + repli texte brut). Sans elle, l'email reste
+    en texte brut simple, comme avant.
 
     thread_id / in_reply_to (optionnels) rattachent l'email à un fil Gmail
     existant — utilisé pour les relances, afin qu'elles arrivent comme la
     suite du premier message plutôt que comme un email tout neuf dans la
     boîte du prospect. in_reply_to doit être l'en-tête Message-ID (RFC) du
     message auquel on répond, récupérable via get_rfc_message_id()."""
-    message = MIMEText(body_text)
-    message["to"] = to_email
-    message["subject"] = subject
+    if chemin_signature and chemin_signature.exists():
+        message = _construire_message_avec_signature(to_email, subject, body_text, chemin_signature)
+    else:
+        message = MIMEText(body_text)
+        message["to"] = to_email
+        message["subject"] = subject
     if in_reply_to:
         message["In-Reply-To"] = in_reply_to
         message["References"] = in_reply_to

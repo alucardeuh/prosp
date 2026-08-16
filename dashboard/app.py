@@ -75,7 +75,7 @@ def _definir_env(cle: str, valeur: str) -> None:
 
 
 from flask import (
-    Flask, abort, flash, jsonify, redirect, render_template, request, url_for,
+    Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -346,6 +346,7 @@ def parametres():
                            niveaux_recherche=email_sender.NIVEAUX_RECHERCHE,
                            statut_gmail=_statut_gmail(profil), statut_hubspot=_statut_hubspot(profil),
                            profil_connexions=profil, anthropic=anthropic_config,
+                           a_une_signature=bool(profils.chemin_signature(profil)),
                            actif="parametres")
 
 
@@ -851,6 +852,37 @@ def parametres_brief():
     profils.save_brief(profil, brief)
     flash(f"Ton des emails du profil « {profil} » mis à jour.", "succes")
     return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/signature", methods=["POST"])
+def parametres_signature():
+    profil = db.profil_actif()
+    fichier = request.files.get("fichier")
+    if not fichier or fichier.filename == "":
+        flash("Aucune image sélectionnée.", "erreur")
+        return redirect(url_for("parametres"))
+    extension = fichier.filename.rsplit(".", 1)[-1] if "." in fichier.filename else ""
+    try:
+        profils.sauver_signature(profil, fichier.read(), extension)
+        flash("Signature enregistrée — incluse automatiquement dans tes prochains envois.", "succes")
+    except ValueError as exc:
+        flash(str(exc), "erreur")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/signature/supprimer", methods=["POST"])
+def parametres_supprimer_signature():
+    profils.supprimer_signature(db.profil_actif())
+    flash("Signature retirée — tes prochains envois repartent en texte simple.", "succes")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/signature/apercu")
+def parametres_apercu_signature():
+    chemin = profils.chemin_signature(db.profil_actif())
+    if not chemin:
+        return "", 404
+    return send_file(chemin)
 
 
 @app.route("/parametres/reglages", methods=["POST"])

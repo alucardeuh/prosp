@@ -81,7 +81,9 @@ ouvrent directement le navigateur sur l'interface.
 - **Paramètres** (`/parametres`) — en tête de page, la **clé API Anthropic**
   et les modèles Claude utilisés, puis les **connexions** (Gmail, HubSpot,
   propres à chaque profil) pilotables entièrement depuis le navigateur ;
-  puis ICP, ton des emails, limites d'envoi, délai/nombre de relances,
+  puis ICP, ton des emails, **signature visuelle** (image ajoutée
+  automatiquement sous chaque email envoyé — repli en texte simple si
+  aucune n'est configurée), limites d'envoi, délai/nombre de relances,
   création de profils.
 - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
   éditables, notes de suivi horodatées, historique complet avec tokens
