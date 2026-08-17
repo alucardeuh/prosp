@@ -1,0 +1,269 @@
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index 808acda..7b9a3b7 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -53,7 +53,8 @@ async function action(url, corps, options) {
+       return null;
+     }
+     if (donnees.message) toast(donnees.message, "succes");
+-    if (options.recharger) setTimeout(() => location.reload(), options.delai || 600);
++    if (options.rafraichir) setTimeout(() => rafraichirDoucement(options.rafraichir), options.delai || 300);
++    else if (options.recharger) setTimeout(() => location.reload(), options.delai || 600);
+     return donnees;
+   } catch (e) {
+     toast("Le serveur ne répond pas — vérifie qu'il tourne toujours.", "erreur");
+@@ -61,6 +62,29 @@ async function action(url, corps, options) {
+   }
+ }
+ 
++// Remplace un ou plusieurs containers (par id) par leur version fraîchement
++// rendue par le serveur, sans recharger toute la page : pas de flash blanc,
++// la position de scroll reste intacte. Un container absent du nouveau HTML
++// (ex : la section "Sans brouillon" a disparu car il n'y en a plus) est
++// simplement retiré plutôt que laissé tel quel. Repli sur un vrai
++// rechargement si la requête échoue — mieux vaut un flash que de rester
++// sur un état périmé sans s'en rendre compte.
++async function rafraichirDoucement(ids) {
++  try {
++    const reponse = await fetch(window.location.href, { cache: "no-store" });
++    const texte = await reponse.text();
++    const nouveauDoc = new DOMParser().parseFromString(texte, "text/html");
++    ids.forEach((id) => {
++      const ancien = document.getElementById(id);
++      const nouveau = nouveauDoc.getElementById(id);
++      if (ancien && nouveau) ancien.replaceWith(nouveau);
++      else if (ancien && !nouveau) ancien.remove();
++    });
++  } catch (e) {
++    location.reload();
++  }
++}
++
+ // ---------------------------------------------------------------- jobs de fond
+ 
+ let jobEnCours = null;
+@@ -80,7 +104,7 @@ function masquerBandeau() {
+   document.getElementById("bandeau-job").classList.remove("visible");
+ }
+ 
+-async function suivreJob(jobId) {
++async function suivreJob(jobId, idsRafraichir) {
+   jobEnCours = jobId;
+   const bouton = document.querySelector("#bandeau-job .annuler-job");
+   if (bouton) bouton.disabled = false;
+@@ -102,17 +126,21 @@ async function suivreJob(jobId) {
+       else if (job.etat === "termine") { message = "Terminé : " + job.titre + erreurs; type = job.erreurs ? "erreur" : "succes"; }
+       else { message = "Échec : " + job.titre; type = "erreur"; }
+       toast(message, type);
+-      setTimeout(() => { masquerBandeau(); location.reload(); }, job.etat === "termine" && !job.erreurs ? 1000 : 3500);
++      setTimeout(() => {
++        masquerBandeau();
++        if (idsRafraichir) rafraichirDoucement(idsRafraichir);
++        else location.reload();
++      }, job.etat === "termine" && !job.erreurs ? 1000 : 3500);
+     }
+   }, 900);
+ }
+ 
+-async function lancerJob(url, corps, bouton) {
++async function lancerJob(url, corps, bouton, idsRafraichir) {
+   if (jobEnCours) { toast("Une action est déjà en cours.", "erreur"); return; }
+   if (bouton) bouton.disabled = true;
+   const donnees = await action(url, corps);
+   if (bouton) bouton.disabled = false;
+-  if (donnees && donnees.job_id) suivreJob(donnees.job_id);
++  if (donnees && donnees.job_id) suivreJob(donnees.job_id, idsRafraichir);
+ }
+ 
+ async function annulerJobActif() {
+@@ -169,19 +197,19 @@ async function sauverBrouillon(prospectId, bouton) {
+ }
+ 
+ async function passerBrouillon(prospectId) {
+-  await action("/api/prospects/" + prospectId + "/passer", null, { recharger: true, delai: 400 });
++  await action("/api/prospects/" + prospectId + "/passer", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
+ }
+ 
+ async function reprendreBrouillon(prospectId, bouton) {
+   bouton.disabled = true;
+-  const donnees = await action("/api/prospects/" + prospectId + "/reprendre", null, { recharger: true, delai: 400 });
++  const donnees = await action("/api/prospects/" + prospectId + "/reprendre", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
+   if (!donnees) bouton.disabled = false;
+ }
+ 
+ async function supprimerBrouillonDefinitif(prospectId, bouton) {
+   if (!confirm("Supprimer ce brouillon pour de bon ? Impossible de revenir en arrière.")) return;
+   bouton.disabled = true;
+-  const donnees = await action("/api/prospects/" + prospectId + "/supprimer-brouillon", null, { recharger: true, delai: 400 });
++  const donnees = await action("/api/prospects/" + prospectId + "/supprimer-brouillon", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
+   if (!donnees) bouton.disabled = false;
+ }
+ 
+@@ -242,12 +270,12 @@ function lireReglagesGeneration() {
+ 
+ async function lancerGenerationAuto(type, bouton) {
+   const corps = Object.assign({ type: type }, lireReglagesGeneration());
+-  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
++  await lancerJob("/api/jobs/generer-brouillons", corps, bouton, ["zone-onglets-envoi"]);
+ }
+ 
+ async function regenererUn(prospectId, type, bouton) {
+   const corps = Object.assign({ type: type }, lireReglagesGeneration());
+-  await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton);
++  await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton, ["zone-onglets-envoi"]);
+ }
+ 
+ // ---------------------------------------------------------------- onglets (page /envoi)
+@@ -304,7 +332,8 @@ async function supprimerSelectionPipeline(bouton) {
+   if (!ids.length) return;
+   if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
+   bouton.disabled = true;
+-  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
++  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids },
++    { rafraichir: ["sous-titre-pipeline", "zone-actions-pipeline", "zone-pipeline-contenu"], delai: 300 });
+   if (!donnees) bouton.disabled = false;
+ }
+ 
+@@ -312,7 +341,7 @@ async function qualifierSelectionPipeline(bouton) {
+   const ids = Array.from(document.querySelectorAll("#table-prospects .case-selection-pipeline:checked"))
+     .map((c) => parseInt(c.value, 10));
+   if (!ids.length) return;
+-  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton);
++  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton, ["sous-titre-pipeline", "zone-actions-pipeline", "zone-pipeline-contenu"]);
+ }
+ 
+ function majCompteurSelection() {
+@@ -331,7 +360,8 @@ async function supprimerSelection(bouton) {
+   if (!ids.length) return;
+   if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
+   bouton.disabled = true;
+-  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
++  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids },
++    { rafraichir: ["zone-onglets-envoi", "carte-selection-sur-mesure"], delai: 300 });
+   if (!donnees) bouton.disabled = false;
+ }
+ 
+@@ -355,7 +385,7 @@ async function genererSelection(type, bouton) {
+     .map((c) => parseInt(c.value, 10));
+   if (!ids.length) return;
+   const corps = Object.assign({ type: type, ids: ids }, lireReglagesGeneration());
+-  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
++  await lancerJob("/api/jobs/generer-brouillons", corps, bouton, ["zone-onglets-envoi"]);
+ }
+ 
+ document.addEventListener("click", (e) => {
+@@ -478,12 +508,13 @@ async function confirmerImportCsv(bouton) {
+     mapping[sel.dataset.colonne] = sel.value;
+   });
+   bouton.disabled = true;
+-  const donnees = await action(
+-    "/ajouter/csv/confirmer",
+-    { token: tokenImportCsv, mapping: mapping },
+-    { recharger: true, delai: 600 }
+-  );
+-  if (!donnees) bouton.disabled = false;
++  const donnees = await action("/ajouter/csv/confirmer", { token: tokenImportCsv, mapping: mapping });
++  bouton.disabled = false;
++  if (donnees) {
++    tokenImportCsv = null;
++    document.getElementById("zone-mapping-csv").style.display = "none";
++    document.getElementById("fichier").value = "";
++  }
+ }
+ 
+ function annulerImportCsv() {
+diff --git a/dashboard/templates/envoi.html b/dashboard/templates/envoi.html
+index cb727be..148e995 100644
+--- a/dashboard/templates/envoi.html
++++ b/dashboard/templates/envoi.html
+@@ -38,6 +38,7 @@
+     {% endif %}
+ </div>
+ 
++<div id="zone-onglets-envoi">
+ {% if not avec_brouillon and not sans_brouillon and not mis_de_cote %}
+ <div class="vide">
+     Aucun prospect qualifié avec email en attente d'envoi.<br>
+@@ -165,8 +166,9 @@
+     {% endif %}
+ </div>
+ {% endif %}
++</div>
+ 
+-<div class="carte">
++<div class="carte" id="carte-selection-sur-mesure">
+     <h2>Composer un envoi sur mesure</h2>
+     <p class="aide">
+         Choisis exactement qui contacter, indépendamment du statut de
+diff --git a/dashboard/templates/index.html b/dashboard/templates/index.html
+index 7d626b3..62c0f95 100644
+--- a/dashboard/templates/index.html
++++ b/dashboard/templates/index.html
+@@ -5,10 +5,10 @@
+ <div class="entete-page">
+     <div>
+         <h1>Pipeline</h1>
+-        <p class="sous-titre">{{ total }} prospect(s) dans le profil « {{ profil_actif }} »</p>
++        <p class="sous-titre" id="sous-titre-pipeline">{{ total }} prospect(s) dans le profil « {{ profil_actif }} »</p>
+     </div>
+-    <div class="rangee-boutons">
+-        <button class="primaire" onclick="lancerJob('/api/jobs/qualifier', null, this)"
++    <div class="rangee-boutons" id="zone-actions-pipeline">
++        <button class="primaire" onclick="lancerJob('/api/jobs/qualifier', null, this, ['sous-titre-pipeline', 'zone-actions-pipeline', 'zone-pipeline-contenu'])"
+                 {% if not counts.get('nouveau') %}disabled title="Aucun prospect « nouveau »"{% endif %}>
+             Qualifier les nouveaux ({{ counts.get('nouveau', 0) }})
+         </button>
+@@ -18,7 +18,7 @@
+         <button class="danger" id="bouton-supprimer-selection-pipeline" onclick="supprimerSelectionPipeline(this)" disabled>
+             Supprimer la sélection (<span id="compteur-selection-pipeline-suppr">0</span>)
+         </button>
+-        <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
++        <button onclick="lancerJob('/api/jobs/verifier-emails', null, this, ['sous-titre-pipeline', 'zone-actions-pipeline', 'zone-pipeline-contenu'])">
+             Vérifier les réponses
+         </button>
+     </div>
+@@ -32,6 +32,7 @@
+ </div>
+ {% endif %}
+ 
++<div id="zone-pipeline-contenu">
+ {% if total %}
+ <div class="pipeline">
+     <div class="pipeline-barre">
+@@ -108,5 +109,6 @@
+     <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
+ </div>
+ {% endif %}
++</div>
+ 
+ {% endblock %}
+diff --git a/dashboard/templates/prospect.html b/dashboard/templates/prospect.html
+index b5a4959..ea8283f 100644
+--- a/dashboard/templates/prospect.html
++++ b/dashboard/templates/prospect.html
+@@ -92,7 +92,7 @@
+     </div>
+ </div>
+ 
+-<div class="carte">
++<div class="carte" id="carte-historique">
+     <h2>Historique
+         {% if interactions %}
+             {% set total_e = interactions | sum(attribute='tokens_entree') %}
+@@ -144,10 +144,14 @@ async function verifierEmail(id, bouton) {
+ }
+ async function ajouterNote(e, id) {
+   e.preventDefault();
+-  const note = e.target.note.value.trim();
++  const champNote = e.target.elements.note;
++  const note = champNote.value.trim();
+   if (!note) return false;
+   const r = await action("/api/prospects/" + id + "/note", { texte: note });
+-  if (r && r.ok) location.reload();
++  if (r && r.ok) {
++    champNote.value = "";
++    rafraichirDoucement(["carte-historique"]);
++  }
+   return false;
+ }
+ async function rediger(id, mode, bouton) {

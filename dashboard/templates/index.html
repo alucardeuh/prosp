@@ -5,10 +5,10 @@
 <div class="entete-page">
     <div>
         <h1>Pipeline</h1>
-        <p class="sous-titre">{{ total }} prospect(s) dans le profil « {{ profil_actif }} »</p>
+        <p class="sous-titre" id="sous-titre-pipeline">{{ total }} prospect(s) dans le profil « {{ profil_actif }} »</p>
     </div>
-    <div class="rangee-boutons">
-        <button class="primaire" onclick="lancerJob('/api/jobs/qualifier', null, this)"
+    <div class="rangee-boutons" id="zone-actions-pipeline">
+        <button class="primaire" onclick="lancerJob('/api/jobs/qualifier', null, this, ['sous-titre-pipeline', 'zone-actions-pipeline', 'zone-pipeline-contenu'])"
                 {% if not counts.get('nouveau') %}disabled title="Aucun prospect « nouveau »"{% endif %}>
             Qualifier les nouveaux ({{ counts.get('nouveau', 0) }})
         </button>
@@ -18,7 +18,7 @@
         <button class="danger" id="bouton-supprimer-selection-pipeline" onclick="supprimerSelectionPipeline(this)" disabled>
             Supprimer la sélection (<span id="compteur-selection-pipeline-suppr">0</span>)
         </button>
-        <button onclick="lancerJob('/api/jobs/verifier-emails', null, this)">
+        <button onclick="lancerJob('/api/jobs/verifier-emails', null, this, ['sous-titre-pipeline', 'zone-actions-pipeline', 'zone-pipeline-contenu'])">
             Vérifier les réponses
         </button>
     </div>
@@ -32,6 +32,7 @@
 </div>
 {% endif %}
 
+<div id="zone-pipeline-contenu">
 {% if total %}
 <div class="pipeline">
     <div class="pipeline-barre">
@@ -108,5 +109,6 @@
     <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
 </div>
 {% endif %}
+</div>
 
 {% endblock %}

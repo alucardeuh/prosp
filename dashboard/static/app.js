@@ -53,11 +53,35 @@ async function action(url, corps, options) {
       return null;
     }
     if (donnees.message) toast(donnees.message, "succes");
-    if (options.recharger) setTimeout(() => location.reload(), options.delai || 600);
+    if (options.rafraichir) setTimeout(() => rafraichirDoucement(options.rafraichir), options.delai || 300);
+    else if (options.recharger) setTimeout(() => location.reload(), options.delai || 600);
     return donnees;
   } catch (e) {
     toast("Le serveur ne répond pas — vérifie qu'il tourne toujours.", "erreur");
     return null;
+  }
+}
+
+// Remplace un ou plusieurs containers (par id) par leur version fraîchement
+// rendue par le serveur, sans recharger toute la page : pas de flash blanc,
+// la position de scroll reste intacte. Un container absent du nouveau HTML
+// (ex : la section "Sans brouillon" a disparu car il n'y en a plus) est
+// simplement retiré plutôt que laissé tel quel. Repli sur un vrai
+// rechargement si la requête échoue — mieux vaut un flash que de rester
+// sur un état périmé sans s'en rendre compte.
+async function rafraichirDoucement(ids) {
+  try {
+    const reponse = await fetch(window.location.href, { cache: "no-store" });
+    const texte = await reponse.text();
+    const nouveauDoc = new DOMParser().parseFromString(texte, "text/html");
+    ids.forEach((id) => {
+      const ancien = document.getElementById(id);
+      const nouveau = nouveauDoc.getElementById(id);
+      if (ancien && nouveau) ancien.replaceWith(nouveau);
+      else if (ancien && !nouveau) ancien.remove();
+    });
+  } catch (e) {
+    location.reload();
   }
 }
 
@@ -80,7 +104,7 @@ function masquerBandeau() {
   document.getElementById("bandeau-job").classList.remove("visible");
 }
 
-async function suivreJob(jobId) {
+async function suivreJob(jobId, idsRafraichir) {
   jobEnCours = jobId;
   const bouton = document.querySelector("#bandeau-job .annuler-job");
   if (bouton) bouton.disabled = false;
@@ -102,17 +126,21 @@ async function suivreJob(jobId) {
       else if (job.etat === "termine") { message = "Terminé : " + job.titre + erreurs; type = job.erreurs ? "erreur" : "succes"; }
       else { message = "Échec : " + job.titre; type = "erreur"; }
       toast(message, type);
-      setTimeout(() => { masquerBandeau(); location.reload(); }, job.etat === "termine" && !job.erreurs ? 1000 : 3500);
+      setTimeout(() => {
+        masquerBandeau();
+        if (idsRafraichir) rafraichirDoucement(idsRafraichir);
+        else location.reload();
+      }, job.etat === "termine" && !job.erreurs ? 1000 : 3500);
     }
   }, 900);
 }
 
-async function lancerJob(url, corps, bouton) {
+async function lancerJob(url, corps, bouton, idsRafraichir) {
   if (jobEnCours) { toast("Une action est déjà en cours.", "erreur"); return; }
   if (bouton) bouton.disabled = true;
   const donnees = await action(url, corps);
   if (bouton) bouton.disabled = false;
-  if (donnees && donnees.job_id) suivreJob(donnees.job_id);
+  if (donnees && donnees.job_id) suivreJob(donnees.job_id, idsRafraichir);
 }
 
 async function annulerJobActif() {
@@ -169,19 +197,19 @@ async function sauverBrouillon(prospectId, bouton) {
 }
 
 async function passerBrouillon(prospectId) {
-  await action("/api/prospects/" + prospectId + "/passer", null, { recharger: true, delai: 400 });
+  await action("/api/prospects/" + prospectId + "/passer", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
 }
 
 async function reprendreBrouillon(prospectId, bouton) {
   bouton.disabled = true;
-  const donnees = await action("/api/prospects/" + prospectId + "/reprendre", null, { recharger: true, delai: 400 });
+  const donnees = await action("/api/prospects/" + prospectId + "/reprendre", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
   if (!donnees) bouton.disabled = false;
 }
 
 async function supprimerBrouillonDefinitif(prospectId, bouton) {
   if (!confirm("Supprimer ce brouillon pour de bon ? Impossible de revenir en arrière.")) return;
   bouton.disabled = true;
-  const donnees = await action("/api/prospects/" + prospectId + "/supprimer-brouillon", null, { recharger: true, delai: 400 });
+  const donnees = await action("/api/prospects/" + prospectId + "/supprimer-brouillon", null, { rafraichir: ["zone-onglets-envoi"], delai: 300 });
   if (!donnees) bouton.disabled = false;
 }
 
@@ -242,12 +270,12 @@ function lireReglagesGeneration() {
 
 async function lancerGenerationAuto(type, bouton) {
   const corps = Object.assign({ type: type }, lireReglagesGeneration());
-  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
+  await lancerJob("/api/jobs/generer-brouillons", corps, bouton, ["zone-onglets-envoi"]);
 }
 
 async function regenererUn(prospectId, type, bouton) {
   const corps = Object.assign({ type: type }, lireReglagesGeneration());
-  await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton);
+  await lancerJob("/api/prospects/" + prospectId + "/generer", corps, bouton, ["zone-onglets-envoi"]);
 }
 
 // ---------------------------------------------------------------- onglets (page /envoi)
@@ -304,7 +332,8 @@ async function supprimerSelectionPipeline(bouton) {
   if (!ids.length) return;
   if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
   bouton.disabled = true;
-  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
+  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids },
+    { rafraichir: ["sous-titre-pipeline", "zone-actions-pipeline", "zone-pipeline-contenu"], delai: 300 });
   if (!donnees) bouton.disabled = false;
 }
 
@@ -312,7 +341,7 @@ async function qualifierSelectionPipeline(bouton) {
   const ids = Array.from(document.querySelectorAll("#table-prospects .case-selection-pipeline:checked"))
     .map((c) => parseInt(c.value, 10));
   if (!ids.length) return;
-  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton);
+  await lancerJob("/api/jobs/qualifier", { ids: ids }, bouton, ["sous-titre-pipeline", "zone-actions-pipeline", "zone-pipeline-contenu"]);
 }
 
 function majCompteurSelection() {
@@ -331,7 +360,8 @@ async function supprimerSelection(bouton) {
   if (!ids.length) return;
   if (!confirm(`Supprimer définitivement ${ids.length} prospect(s) ? Impossible de revenir en arrière.`)) return;
   bouton.disabled = true;
-  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids }, { recharger: true, delai: 400 });
+  const donnees = await action("/api/prospects/supprimer-selection", { ids: ids },
+    { rafraichir: ["zone-onglets-envoi", "carte-selection-sur-mesure"], delai: 300 });
   if (!donnees) bouton.disabled = false;
 }
 
@@ -355,7 +385,7 @@ async function genererSelection(type, bouton) {
     .map((c) => parseInt(c.value, 10));
   if (!ids.length) return;
   const corps = Object.assign({ type: type, ids: ids }, lireReglagesGeneration());
-  await lancerJob("/api/jobs/generer-brouillons", corps, bouton);
+  await lancerJob("/api/jobs/generer-brouillons", corps, bouton, ["zone-onglets-envoi"]);
 }
 
 document.addEventListener("click", (e) => {
@@ -478,12 +508,13 @@ async function confirmerImportCsv(bouton) {
     mapping[sel.dataset.colonne] = sel.value;
   });
   bouton.disabled = true;
-  const donnees = await action(
-    "/ajouter/csv/confirmer",
-    { token: tokenImportCsv, mapping: mapping },
-    { recharger: true, delai: 600 }
-  );
-  if (!donnees) bouton.disabled = false;
+  const donnees = await action("/ajouter/csv/confirmer", { token: tokenImportCsv, mapping: mapping });
+  bouton.disabled = false;
+  if (donnees) {
+    tokenImportCsv = null;
+    document.getElementById("zone-mapping-csv").style.display = "none";
+    document.getElementById("fichier").value = "";
+  }
 }
 
 function annulerImportCsv() {
