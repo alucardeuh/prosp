@@ -27,6 +27,17 @@
     </div>
     <label for="contexte-batch" style="margin-top:12px">Contexte pour ce lot (facultatif)</label>
     <textarea id="contexte-batch" rows="3" placeholder="Ex : recontacte les directeurs commerciaux du secteur assurance, une nouvelle réglementation impose X — mets en avant cet angle."></textarea>
+
+    {% if skills %}
+    <label for="skill-lot" style="margin-top:12px">Skill à appliquer à ce lot (facultatif)</label>
+    <select id="skill-lot">
+        <option value="">Aucun</option>
+        {% for s in skills %}
+        <option value="{{ s.nom }}">{{ s.nom }}</option>
+        {% endfor %}
+    </select>
+    <p class="aide">Ne s'applique qu'à cette génération précise, jamais mémorisé — gère tes skills dans <a href="/parametres">Paramètres</a>.</p>
+    {% endif %}
 </div>
 
 <div class="entete-page">

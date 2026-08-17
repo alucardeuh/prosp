@@ -262,9 +262,11 @@ function majQuota(restant) {
 function lireReglagesGeneration() {
   const champContexte = document.getElementById("contexte-batch");
   const champNiveau = document.getElementById("niveau-recherche");
+  const champSkill = document.getElementById("skill-lot");
   return {
     contexte_batch: champContexte ? champContexte.value : "",
     niveau_recherche: champNiveau ? champNiveau.value : undefined,
+    skill_nom: champSkill && champSkill.value ? champSkill.value : null,
   };
 }
 

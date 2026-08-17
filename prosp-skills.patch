@@ -1,0 +1,438 @@
+diff --git a/README.md b/README.md
+index d25224c..5065e93 100644
+--- a/README.md
++++ b/README.md
+@@ -39,7 +39,8 @@ ouvrent directement le navigateur sur l'interface.
+   en arrière-plan avec une barre de progression et un bouton **Annuler** —
+   la page ne gèle plus jamais.
+ - **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
+-  libre) en haut, puis trois onglets cliquables :
++  libre, **skill à appliquer** si tu en as importé — jamais mémorisé,
++  propre à ce lot précis) en haut, puis trois onglets cliquables :
+   - **Brouillons** — prêts à relire/envoyer/programmer, en liste compacte
+     (clic sur un nom pour déplier son email complet) ;
+   - **À générer** — les qualifiés sans brouillon, un par un ou tous d'un coup ;
+@@ -83,8 +84,11 @@ ouvrent directement le navigateur sur l'interface.
+   propres à chaque profil) pilotables entièrement depuis le navigateur ;
+   puis ICP, ton des emails, **signature visuelle** (image ajoutée
+   automatiquement sous chaque email envoyé — repli en texte simple si
+-  aucune n'est configurée), limites d'envoi, délai/nombre de relances,
+-  création de profils.
++  aucune n'est configurée), **skills** (consignes en Markdown pour un
++  scénario précis — secteur, poste ciblé, type de projet... — importées
++  depuis un fichier `.md` ; réimporter un skill du même nom remplace
++  l'ancien plutôt que de le dupliquer), limites d'envoi, délai/nombre de
++  relances, création de profils.
+ - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
+   éditables, notes de suivi horodatées, historique complet avec tokens
+   consommés par action, suppression.
+diff --git a/agents/email_sender.py b/agents/email_sender.py
+index 2d2b0f3..0f2762e 100644
+--- a/agents/email_sender.py
++++ b/agents/email_sender.py
+@@ -161,15 +161,16 @@ soudaine après un paragraphe formel)."""
+ 
+ 
+ def build_system_email(icp: dict, brief: dict, avec_recherche: bool = True,
+-                       contexte_batch: str = "", modeles: list[dict] | None = None) -> list[dict]:
++                       contexte_batch: str = "", modeles: list[dict] | None = None,
++                       skill: dict | None = None) -> list[dict]:
+     """2 points de cache :
+     - bloc profil (produit, ton, règles d'écriture, signature, exemples) :
+       identique pour TOUT email initial de ce profil, quel que soit le lot —
+       reste en cache à travers plusieurs lots tant qu'ils s'enchaînent dans
+       les 5 minutes (ou 1h si un jour on active le cache longue durée).
+-    - bloc lot (recherche on/off, contexte de ce lot précis) : change d'un
+-      lot à l'autre, mais identique pour tous les prospects D'UN MÊME
+-      lot — cacheable entre les prospects de CE lot.
++    - bloc lot (recherche on/off, contexte de ce lot précis, skill choisi
++      pour ce lot) : change d'un lot à l'autre, mais identique pour tous
++      les prospects D'UN MÊME lot — cacheable entre les prospects de CE lot.
+     Sur un lot de N emails, seul le premier appel paie le plein tarif pour
+     ces deux blocs ; les N-1 suivants les lisent en cache à ~10% du prix."""
+     produit = icp.get("produit", {})
+@@ -226,6 +227,15 @@ base-toi uniquement sur le profil du prospect, sans jamais inventer une
+ actualité que tu n'as pas vérifiée. Appelle l'outil `rediger_email` avec ton
+ résultat final. Ne réponds jamais en texte libre à la fin."""
+ 
++    if skill and skill.get("contenu"):
++        bloc_lot += f"""
++
++# Skill choisi pour ce lot précis : {skill.get('nom', '')}
++Consignes spécialisées pour ce lot d'envoi, à prendre en compte en
++priorité — écrites à l'avance pour ce scénario précis, ça prime sur le ton
++général si les deux se contredisent sur un point précis :
++{skill['contenu'].strip()}"""
++
+     if contexte_batch and contexte_batch.strip():
+         bloc_lot += f"""
+ 
+@@ -258,7 +268,8 @@ n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
+ sinon sur un détail réel de son profil ci-dessus."""
+ 
+ 
+-def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "") -> list[dict]:
++def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "",
++                         skill: dict | None = None) -> list[dict]:
+     """Même logique à 2 points de cache que build_system_email, adaptée aux
+     relances (jamais de recherche web, donc pas de variante recherche
+     on/off à gérer dans le bloc lot)."""
+@@ -293,11 +304,20 @@ Proposition de valeur : {produit.get('proposition_de_valeur', '')}
+ {brief.get('signature', '')}
+ {brief.get('mention_obligatoire', '')}"""
+ 
+-    bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
++    bloc_lot = ""
++    if skill and skill.get("contenu"):
++        bloc_lot += f"""# Skill choisi pour ce lot précis : {skill.get('nom', '')}
++Consignes spécialisées pour ce lot de relances, à prendre en compte en
++priorité — écrites à l'avance pour ce scénario précis :
++{skill['contenu'].strip()}
++
++"""
+     if contexte_batch and contexte_batch.strip():
+-        bloc_lot = f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
++        bloc_lot += f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
+ lancé cette génération, à prendre en compte en priorité)
+ {contexte_batch.strip()}"""
++    if not bloc_lot:
++        bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
+ 
+     return [
+         {"type": "text", "text": bloc_profil, "cache_control": {"type": "ephemeral"}},
+@@ -376,26 +396,39 @@ def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherc
+ 
+ 
+ def redact_email(prospect: dict, icp: dict, brief: dict, client=None,
+-                 niveau_recherche: str | int | None = None, contexte_batch: str = "") -> tuple[dict, dict]:
++                 niveau_recherche: str | int | None = None, contexte_batch: str = "",
++                 skill_nom: str | None = None) -> tuple[dict, dict]:
+     """Rédige l'email initial. Fait de 0 à N recherches web selon
+     niveau_recherche (simple/normal/approfondi/desactive, ou un entier, ou
+     None pour le réglage par défaut du profil dans Paramètres). contexte_batch
+     est un texte libre propre à CE lot d'envoi, jamais persisté ailleurs que
+-    dans le prompt de cette génération précise. Retourne ({objet, corps}, usage)."""
++    dans le prompt de cette génération précise. skill_nom (facultatif) sélectionne
++    un skill sauvegardé du profil, appliqué à CE lot uniquement — jamais
++    mémorisé comme réglage permanent. Retourne ({objet, corps}, usage)."""
++    profil = prospect.get("profil") or db.profil_actif()
+     max_recherches = _max_recherches_web(niveau_recherche)
+-    modeles = profils.load_modeles(prospect.get("profil") or db.profil_actif())
++    modeles = profils.load_modeles(profil)
++    skill = _trouver_skill(profil, skill_nom)
+     system = build_system_email(icp, brief, avec_recherche=max_recherches > 0,
+-                                contexte_batch=contexte_batch, modeles=modeles)
++                                contexte_batch=contexte_batch, modeles=modeles, skill=skill)
+     return _appeler_redaction(system, build_prompt(prospect), client, max_recherches=max_recherches)
+ 
+ 
++def _trouver_skill(profil: str, skill_nom: str | None) -> dict | None:
++    if not skill_nom:
++        return None
++    return next((s for s in profils.load_skills(profil) if s.get("nom") == skill_nom), None)
++
++
+ def redact_relance(prospect: dict, icp: dict, brief: dict, client=None,
+-                   contexte_batch: str = "") -> tuple[dict, dict]:
++                   contexte_batch: str = "", skill_nom: str | None = None) -> tuple[dict, dict]:
+     """Rédige un email de relance court, basé sur le premier email envoyé.
+     Pas de recherche web : la relance s'appuie sur le fil existant."""
+     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
+     premier_email = derniere["contenu"] if derniere else ""
+-    system = build_system_relance(icp, brief, contexte_batch=contexte_batch)
++    profil = prospect.get("profil") or db.profil_actif()
++    skill = _trouver_skill(profil, skill_nom)
++    system = build_system_relance(icp, brief, contexte_batch=contexte_batch, skill=skill)
+     return _appeler_redaction(system, build_prompt_relance(prospect, premier_email), client, max_recherches=0)
+ 
+ 
+@@ -423,14 +456,16 @@ def _verifier_email_prospect(prospect: dict) -> dict:
+ 
+ def generer_brouillon(prospect: dict, icp: dict, brief: dict,
+                       type_: str = "initial", dry_run: bool = False, client=None,
+-                      niveau_recherche: str | int | None = None, contexte_batch: str = "") -> dict:
++                      niveau_recherche: str | int | None = None, contexte_batch: str = "",
++                      skill_nom: str | None = None) -> dict:
+     """Génère un brouillon (initial ou relance) et le PERSISTE en base, avec
+     le coût réel (tokens + recherches) de cette génération précise — cumulé
+     si le brouillon est régénéré plusieurs fois avant l'envoi.
+     niveau_recherche et contexte_batch ne s'appliquent qu'aux emails initiaux
+     (une relance ne fait jamais de recherche, et le contexte de batch reste
+-    pertinent pour elle aussi si fourni). Brique utilisée par le CLI et par
+-    les jobs du dashboard.
++    pertinent pour elle aussi si fourni). skill_nom (facultatif) sélectionne
++    un skill sauvegardé du profil pour CE lot uniquement, initial ou relance.
++    Brique utilisée par le CLI et par les jobs du dashboard.
+ 
+     Vérifie l'email AVANT d'appeler l'API : inutile de payer une rédaction
+     pour une adresse dont le domaine est confirmé incapable de recevoir du
+@@ -445,10 +480,12 @@ def generer_brouillon(prospect: dict, icp: dict, brief: dict,
+     if dry_run:
+         redaction, usage = _fake_redaction(prospect, relance=(type_ == "relance"))
+     elif type_ == "relance":
+-        redaction, usage = redact_relance(prospect, icp, brief, client, contexte_batch=contexte_batch)
++        redaction, usage = redact_relance(prospect, icp, brief, client,
++                                          contexte_batch=contexte_batch, skill_nom=skill_nom)
+     else:
+         redaction, usage = redact_email(prospect, icp, brief, client,
+-                                        niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
++                                        niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
++                                        skill_nom=skill_nom)
+     db.set_brouillon(prospect["id"], redaction["objet"], redaction["corps"], type_=type_,
+                      tokens_entree=usage["tokens_entree"], tokens_sortie=usage["tokens_sortie"],
+                      recherches_web=usage["recherches_web"])
+diff --git a/dashboard/app.py b/dashboard/app.py
+index 5033b6b..8f86b28 100644
+--- a/dashboard/app.py
++++ b/dashboard/app.py
+@@ -278,7 +278,8 @@ def envoi():
+                            selection=selection, postes=postes, statuts=STATUTS,
+                            niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
+                            niveau_recherche_defaut=niveau_recherche_defaut,
+-                           modeles=profils.load_modeles(profil))
++                           modeles=profils.load_modeles(profil),
++                           skills=profils.load_skills(profil))
+ 
+ 
+ @app.route("/relances")
+@@ -347,6 +348,7 @@ def parametres():
+                            statut_gmail=_statut_gmail(profil), statut_hubspot=_statut_hubspot(profil),
+                            profil_connexions=profil, anthropic=anthropic_config,
+                            a_une_signature=bool(profils.chemin_signature(profil)),
++                           skills=profils.load_skills(profil),
+                            actif="parametres")
+ 
+ 
+@@ -453,6 +455,7 @@ def api_generer_brouillons():
+     type_ = donnees.get("type", "initial")
+     niveau_recherche = donnees.get("niveau_recherche")
+     contexte_batch = (donnees.get("contexte_batch") or "").strip()
++    skill_nom = donnees.get("skill_nom") or None
+     profil = db.profil_actif()
+     icp = profils.load_icp(profil)
+     brief = profils.load_brief(profil)
+@@ -499,7 +502,8 @@ def api_generer_brouillons():
+ 
+     def traiter(p, log):
+         email_sender.generer_brouillon(p, icp, brief, type_=type_,
+-                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
++                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
++                                       skill_nom=skill_nom)
+         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')} ({p.get('entreprise','')})"
+ 
+     def terminer(log):
+@@ -526,13 +530,15 @@ def api_generer_un(prospect_id: int):
+     type_ = donnees.get("type", "initial")
+     niveau_recherche = donnees.get("niveau_recherche")
+     contexte_batch = (donnees.get("contexte_batch") or "").strip()
++    skill_nom = donnees.get("skill_nom") or None
+     profil = prospect.get("profil") or db.profil_actif()
+     icp = profils.load_icp(profil)
+     brief = profils.load_brief(profil)
+ 
+     def traiter(p, log):
+         email_sender.generer_brouillon(p, icp, brief, type_=type_,
+-                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
++                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
++                                       skill_nom=skill_nom)
+         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')}"
+ 
+     try:
+@@ -885,6 +891,42 @@ def parametres_apercu_signature():
+     return send_file(chemin)
+ 
+ 
++@app.route("/parametres/skills", methods=["POST"])
++def parametres_ajouter_skill():
++    profil = db.profil_actif()
++    fichier = request.files.get("fichier")
++    nom = (request.form.get("nom") or "").strip()
++    if not fichier or fichier.filename == "":
++        flash("Aucun fichier .md sélectionné.", "erreur")
++        return redirect(url_for("parametres"))
++    if not nom:
++        # Repli sur le nom du fichier (sans l'extension) si aucun nom donné.
++        nom = fichier.filename.rsplit(".", 1)[0]
++    try:
++        contenu = fichier.read().decode("utf-8")
++    except UnicodeDecodeError:
++        flash("Le fichier ne semble pas être du texte UTF-8 valide.", "erreur")
++        return redirect(url_for("parametres"))
++    try:
++        profils.ajouter_skill(profil, nom, contenu)
++        flash(f"Skill « {nom} » ajouté.", "succes")
++    except ValueError as exc:
++        flash(str(exc), "erreur")
++    return redirect(url_for("parametres"))
++
++
++@app.route("/parametres/skills/supprimer", methods=["POST"])
++def parametres_supprimer_skill():
++    profil = db.profil_actif()
++    try:
++        index = int(request.form.get("index", -1))
++    except ValueError:
++        index = -1
++    profils.supprimer_skill(profil, index)
++    flash("Skill supprimé.", "succes")
++    return redirect(url_for("parametres"))
++
++
+ @app.route("/parametres/reglages", methods=["POST"])
+ def parametres_reglages():
+     for cle, defaut in (
+diff --git a/dashboard/static/app.js b/dashboard/static/app.js
+index 7b9a3b7..d9c1404 100644
+--- a/dashboard/static/app.js
++++ b/dashboard/static/app.js
+@@ -262,9 +262,11 @@ function majQuota(restant) {
+ function lireReglagesGeneration() {
+   const champContexte = document.getElementById("contexte-batch");
+   const champNiveau = document.getElementById("niveau-recherche");
++  const champSkill = document.getElementById("skill-lot");
+   return {
+     contexte_batch: champContexte ? champContexte.value : "",
+     niveau_recherche: champNiveau ? champNiveau.value : undefined,
++    skill_nom: champSkill && champSkill.value ? champSkill.value : null,
+   };
+ }
+ 
+diff --git a/dashboard/templates/envoi.html b/dashboard/templates/envoi.html
+index 148e995..ba989be 100644
+--- a/dashboard/templates/envoi.html
++++ b/dashboard/templates/envoi.html
+@@ -27,6 +27,17 @@
+     </div>
+     <label for="contexte-batch" style="margin-top:12px">Contexte pour ce lot (facultatif)</label>
+     <textarea id="contexte-batch" rows="3" placeholder="Ex : recontacte les directeurs commerciaux du secteur assurance, une nouvelle réglementation impose X — mets en avant cet angle."></textarea>
++
++    {% if skills %}
++    <label for="skill-lot" style="margin-top:12px">Skill à appliquer à ce lot (facultatif)</label>
++    <select id="skill-lot">
++        <option value="">Aucun</option>
++        {% for s in skills %}
++        <option value="{{ s.nom }}">{{ s.nom }}</option>
++        {% endfor %}
++    </select>
++    <p class="aide">Ne s'applique qu'à cette génération précise, jamais mémorisé — gère tes skills dans <a href="/parametres">Paramètres</a>.</p>
++    {% endif %}
+ </div>
+ 
+ <div class="entete-page">
+diff --git a/dashboard/templates/parametres.html b/dashboard/templates/parametres.html
+index 328555f..6f2af2c 100644
+--- a/dashboard/templates/parametres.html
++++ b/dashboard/templates/parametres.html
+@@ -248,6 +248,44 @@
+             </form>
+         </div>
+ 
++        <div class="carte">
++            <h2>Skills (profil actif)</h2>
++            <p class="aide">
++                Des consignes en Markdown pour un scénario précis (un
++                secteur, un poste ciblé, un type de projet...), écrites à
++                l'avance — par exemple construites dans une conversation
++                Claude dédiée, puis téléchargées en <span class="mono">.md</span>
++                et importées ici. Contrairement au ton général (toujours
++                appliqué), un skill ne s'utilise que si tu le choisis pour
++                un lot d'envoi précis sur <a href="/envoi">Envoi</a> —
++                jamais par défaut.
++            </p>
++            {% if skills %}
++            <div class="liste-champs-perso" style="margin-top:12px">
++                {% for s in skills %}
++                <div class="champ-perso-ligne">
++                    <span>{{ s.nom }} <span class="aide">— {{ s.contenu[:60] }}{% if s.contenu|length > 60 %}...{% endif %}</span></span>
++                    <form method="post" action="/parametres/skills/supprimer" style="display:inline">
++                        <input type="hidden" name="index" value="{{ loop.index0 }}">
++                        <button type="submit" class="danger" onclick="return confirm('Supprimer ce skill ?')">Retirer</button>
++                    </form>
++                </div>
++                {% endfor %}
++            </div>
++            {% else %}
++            <p class="aide" style="margin-top:10px">Aucun skill enregistré pour ce profil.</p>
++            {% endif %}
++            <form method="post" action="/parametres/skills" enctype="multipart/form-data" style="margin-top:14px">
++                <label for="skill_nom">Nom (affiché dans le sélecteur d'Envoi)</label>
++                <input type="text" id="skill_nom" name="nom" placeholder="Ex : DirCom Assurance">
++                <label for="skill_fichier" style="margin-top:10px">Fichier .md</label>
++                <input type="file" id="skill_fichier" name="fichier" accept=".md,text/markdown" required>
++                <div class="rangee-boutons" style="margin-top:12px">
++                    <button type="submit" class="primaire">Ajouter le skill</button>
++                </div>
++            </form>
++        </div>
++
+         <div class="carte">
+             <h2>Limites et relances</h2>
+             <form method="post" action="/parametres/reglages">
+diff --git a/profils.py b/profils.py
+index b2900ca..80bc0ea 100644
+--- a/profils.py
++++ b/profils.py
+@@ -125,6 +125,7 @@ def creer_profil(nom: str) -> str:
+     _ecrire_yaml(dossier / "email_brief.yaml", BRIEF_VIERGE)
+     _ecrire_yaml(dossier / "champs.yaml", {"champs": []})
+     _ecrire_yaml(dossier / "modeles.yaml", {"modeles": []})
++    _ecrire_yaml(dossier / "skills.yaml", {"skills": []})
+     return identifiant
+ 
+ 
+@@ -242,6 +243,55 @@ def supprimer_modele(profil: str, index: int) -> None:
+         save_modeles(profil, modeles)
+ 
+ 
++def chemin_skills(profil: str) -> Path:
++    return PROFILS_DIR / profil / "skills.yaml"
++
++
++def load_skills(profil: str) -> list[dict]:
++    """Skills du profil : [{nom, contenu}, ...] — des consignes en Markdown,
++    écrites à l'avance (ex. dans une conversation Claude dédiée), pour un
++    scénario précis (secteur, poste ciblé, type de projet...). Contrairement
++    à l'ICP/au ton (toujours appliqués) ou aux modèles (toujours injectés en
++    exemples), un skill ne s'applique QUE si on le choisit explicitement
++    pour un lot d'envoi donné — voir /envoi."""
++    chemin = chemin_skills(profil)
++    if not chemin.exists():
++        _ecrire_yaml(chemin, {"skills": []})
++    with open(chemin, encoding="utf-8") as f:
++        contenu = yaml.safe_load(f) or {}
++    return contenu.get("skills", [])
++
++
++def save_skills(profil: str, skills: list[dict]) -> None:
++    _ecrire_yaml(chemin_skills(profil), {"skills": skills})
++
++
++def ajouter_skill(profil: str, nom: str, contenu_md: str) -> None:
++    """Ajoute un skill — ou REMPLACE le contenu si un skill du même nom
++    existe déjà (utile pour réimporter une version révisée). Sans ce
++    remplacement, deux skills portant le même nom pourraient coexister dans
++    le fichier, mais un seul serait jamais sélectionnable (le premier
++    trouvé par nom) : l'autre deviendrait un doublon mort, invisible."""
++    if not nom.strip() or not contenu_md.strip():
++        raise ValueError("Le nom et le contenu du skill sont obligatoires.")
++    nom = nom.strip()
++    skills = load_skills(profil)
++    for s in skills:
++        if s.get("nom") == nom:
++            s["contenu"] = contenu_md.strip()
++            save_skills(profil, skills)
++            return
++    skills.append({"nom": nom, "contenu": contenu_md.strip()})
++    save_skills(profil, skills)
++
++
++def supprimer_skill(profil: str, index: int) -> None:
++    skills = load_skills(profil)
++    if 0 <= index < len(skills):
++        skills.pop(index)
++        save_skills(profil, skills)
++
++
+ def _identifiant_sur(texte: str) -> str:
+     """Transforme un libellé libre en identifiant technique sûr : translittère
+     les accents d'abord (sinon 'estimé' -> 'estim_' -> 'estim', perdant sa

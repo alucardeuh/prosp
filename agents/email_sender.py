@@ -161,15 +161,16 @@ soudaine après un paragraphe formel)."""
 
 
 def build_system_email(icp: dict, brief: dict, avec_recherche: bool = True,
-                       contexte_batch: str = "", modeles: list[dict] | None = None) -> list[dict]:
+                       contexte_batch: str = "", modeles: list[dict] | None = None,
+                       skill: dict | None = None) -> list[dict]:
     """2 points de cache :
     - bloc profil (produit, ton, règles d'écriture, signature, exemples) :
       identique pour TOUT email initial de ce profil, quel que soit le lot —
       reste en cache à travers plusieurs lots tant qu'ils s'enchaînent dans
       les 5 minutes (ou 1h si un jour on active le cache longue durée).
-    - bloc lot (recherche on/off, contexte de ce lot précis) : change d'un
-      lot à l'autre, mais identique pour tous les prospects D'UN MÊME
-      lot — cacheable entre les prospects de CE lot.
+    - bloc lot (recherche on/off, contexte de ce lot précis, skill choisi
+      pour ce lot) : change d'un lot à l'autre, mais identique pour tous
+      les prospects D'UN MÊME lot — cacheable entre les prospects de CE lot.
     Sur un lot de N emails, seul le premier appel paie le plein tarif pour
     ces deux blocs ; les N-1 suivants les lisent en cache à ~10% du prix."""
     produit = icp.get("produit", {})
@@ -226,6 +227,15 @@ base-toi uniquement sur le profil du prospect, sans jamais inventer une
 actualité que tu n'as pas vérifiée. Appelle l'outil `rediger_email` avec ton
 résultat final. Ne réponds jamais en texte libre à la fin."""
 
+    if skill and skill.get("contenu"):
+        bloc_lot += f"""
+
+# Skill choisi pour ce lot précis : {skill.get('nom', '')}
+Consignes spécialisées pour ce lot d'envoi, à prendre en compte en
+priorité — écrites à l'avance pour ce scénario précis, ça prime sur le ton
+général si les deux se contredisent sur un point précis :
+{skill['contenu'].strip()}"""
+
     if contexte_batch and contexte_batch.strip():
         bloc_lot += f"""
 
@@ -258,7 +268,8 @@ n'importe qui. Appuie-toi sur l'actualité trouvée si elle est pertinente,
 sinon sur un détail réel de son profil ci-dessus."""
 
 
-def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "") -> list[dict]:
+def build_system_relance(icp: dict, brief: dict, contexte_batch: str = "",
+                         skill: dict | None = None) -> list[dict]:
     """Même logique à 2 points de cache que build_system_email, adaptée aux
     relances (jamais de recherche web, donc pas de variante recherche
     on/off à gérer dans le bloc lot)."""
@@ -293,11 +304,20 @@ Proposition de valeur : {produit.get('proposition_de_valeur', '')}
 {brief.get('signature', '')}
 {brief.get('mention_obligatoire', '')}"""
 
-    bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
+    bloc_lot = ""
+    if skill and skill.get("contenu"):
+        bloc_lot += f"""# Skill choisi pour ce lot précis : {skill.get('nom', '')}
+Consignes spécialisées pour ce lot de relances, à prendre en compte en
+priorité — écrites à l'avance pour ce scénario précis :
+{skill['contenu'].strip()}
+
+"""
     if contexte_batch and contexte_batch.strip():
-        bloc_lot = f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
+        bloc_lot += f"""# Contexte donné pour ce lot de relances précis (par la personne qui a
 lancé cette génération, à prendre en compte en priorité)
 {contexte_batch.strip()}"""
+    if not bloc_lot:
+        bloc_lot = "(aucun contexte de lot particulier pour ces relances)"
 
     return [
         {"type": "text", "text": bloc_profil, "cache_control": {"type": "ephemeral"}},
@@ -376,26 +396,39 @@ def _appeler_redaction(system: list[dict], prompt: str, client=None, max_recherc
 
 
 def redact_email(prospect: dict, icp: dict, brief: dict, client=None,
-                 niveau_recherche: str | int | None = None, contexte_batch: str = "") -> tuple[dict, dict]:
+                 niveau_recherche: str | int | None = None, contexte_batch: str = "",
+                 skill_nom: str | None = None) -> tuple[dict, dict]:
     """Rédige l'email initial. Fait de 0 à N recherches web selon
     niveau_recherche (simple/normal/approfondi/desactive, ou un entier, ou
     None pour le réglage par défaut du profil dans Paramètres). contexte_batch
     est un texte libre propre à CE lot d'envoi, jamais persisté ailleurs que
-    dans le prompt de cette génération précise. Retourne ({objet, corps}, usage)."""
+    dans le prompt de cette génération précise. skill_nom (facultatif) sélectionne
+    un skill sauvegardé du profil, appliqué à CE lot uniquement — jamais
+    mémorisé comme réglage permanent. Retourne ({objet, corps}, usage)."""
+    profil = prospect.get("profil") or db.profil_actif()
     max_recherches = _max_recherches_web(niveau_recherche)
-    modeles = profils.load_modeles(prospect.get("profil") or db.profil_actif())
+    modeles = profils.load_modeles(profil)
+    skill = _trouver_skill(profil, skill_nom)
     system = build_system_email(icp, brief, avec_recherche=max_recherches > 0,
-                                contexte_batch=contexte_batch, modeles=modeles)
+                                contexte_batch=contexte_batch, modeles=modeles, skill=skill)
     return _appeler_redaction(system, build_prompt(prospect), client, max_recherches=max_recherches)
 
 
+def _trouver_skill(profil: str, skill_nom: str | None) -> dict | None:
+    if not skill_nom:
+        return None
+    return next((s for s in profils.load_skills(profil) if s.get("nom") == skill_nom), None)
+
+
 def redact_relance(prospect: dict, icp: dict, brief: dict, client=None,
-                   contexte_batch: str = "") -> tuple[dict, dict]:
+                   contexte_batch: str = "", skill_nom: str | None = None) -> tuple[dict, dict]:
     """Rédige un email de relance court, basé sur le premier email envoyé.
     Pas de recherche web : la relance s'appuie sur le fil existant."""
     derniere = db.derniere_interaction(prospect["id"], "email_envoye")
     premier_email = derniere["contenu"] if derniere else ""
-    system = build_system_relance(icp, brief, contexte_batch=contexte_batch)
+    profil = prospect.get("profil") or db.profil_actif()
+    skill = _trouver_skill(profil, skill_nom)
+    system = build_system_relance(icp, brief, contexte_batch=contexte_batch, skill=skill)
     return _appeler_redaction(system, build_prompt_relance(prospect, premier_email), client, max_recherches=0)
 
 
@@ -423,14 +456,16 @@ def _verifier_email_prospect(prospect: dict) -> dict:
 
 def generer_brouillon(prospect: dict, icp: dict, brief: dict,
                       type_: str = "initial", dry_run: bool = False, client=None,
-                      niveau_recherche: str | int | None = None, contexte_batch: str = "") -> dict:
+                      niveau_recherche: str | int | None = None, contexte_batch: str = "",
+                      skill_nom: str | None = None) -> dict:
     """Génère un brouillon (initial ou relance) et le PERSISTE en base, avec
     le coût réel (tokens + recherches) de cette génération précise — cumulé
     si le brouillon est régénéré plusieurs fois avant l'envoi.
     niveau_recherche et contexte_batch ne s'appliquent qu'aux emails initiaux
     (une relance ne fait jamais de recherche, et le contexte de batch reste
-    pertinent pour elle aussi si fourni). Brique utilisée par le CLI et par
-    les jobs du dashboard.
+    pertinent pour elle aussi si fourni). skill_nom (facultatif) sélectionne
+    un skill sauvegardé du profil pour CE lot uniquement, initial ou relance.
+    Brique utilisée par le CLI et par les jobs du dashboard.
 
     Vérifie l'email AVANT d'appeler l'API : inutile de payer une rédaction
     pour une adresse dont le domaine est confirmé incapable de recevoir du
@@ -445,10 +480,12 @@ def generer_brouillon(prospect: dict, icp: dict, brief: dict,
     if dry_run:
         redaction, usage = _fake_redaction(prospect, relance=(type_ == "relance"))
     elif type_ == "relance":
-        redaction, usage = redact_relance(prospect, icp, brief, client, contexte_batch=contexte_batch)
+        redaction, usage = redact_relance(prospect, icp, brief, client,
+                                          contexte_batch=contexte_batch, skill_nom=skill_nom)
     else:
         redaction, usage = redact_email(prospect, icp, brief, client,
-                                        niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
+                                        niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
+                                        skill_nom=skill_nom)
     db.set_brouillon(prospect["id"], redaction["objet"], redaction["corps"], type_=type_,
                      tokens_entree=usage["tokens_entree"], tokens_sortie=usage["tokens_sortie"],
                      recherches_web=usage["recherches_web"])

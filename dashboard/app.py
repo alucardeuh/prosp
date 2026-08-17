@@ -278,7 +278,8 @@ def envoi():
                            selection=selection, postes=postes, statuts=STATUTS,
                            niveaux_recherche=list(email_sender.NIVEAUX_RECHERCHE.keys()),
                            niveau_recherche_defaut=niveau_recherche_defaut,
-                           modeles=profils.load_modeles(profil))
+                           modeles=profils.load_modeles(profil),
+                           skills=profils.load_skills(profil))
 
 
 @app.route("/relances")
@@ -347,6 +348,7 @@ def parametres():
                            statut_gmail=_statut_gmail(profil), statut_hubspot=_statut_hubspot(profil),
                            profil_connexions=profil, anthropic=anthropic_config,
                            a_une_signature=bool(profils.chemin_signature(profil)),
+                           skills=profils.load_skills(profil),
                            actif="parametres")
 
 
@@ -453,6 +455,7 @@ def api_generer_brouillons():
     type_ = donnees.get("type", "initial")
     niveau_recherche = donnees.get("niveau_recherche")
     contexte_batch = (donnees.get("contexte_batch") or "").strip()
+    skill_nom = donnees.get("skill_nom") or None
     profil = db.profil_actif()
     icp = profils.load_icp(profil)
     brief = profils.load_brief(profil)
@@ -499,7 +502,8 @@ def api_generer_brouillons():
 
     def traiter(p, log):
         email_sender.generer_brouillon(p, icp, brief, type_=type_,
-                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
+                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
+                                       skill_nom=skill_nom)
         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')} ({p.get('entreprise','')})"
 
     def terminer(log):
@@ -526,13 +530,15 @@ def api_generer_un(prospect_id: int):
     type_ = donnees.get("type", "initial")
     niveau_recherche = donnees.get("niveau_recherche")
     contexte_batch = (donnees.get("contexte_batch") or "").strip()
+    skill_nom = donnees.get("skill_nom") or None
     profil = prospect.get("profil") or db.profil_actif()
     icp = profils.load_icp(profil)
     brief = profils.load_brief(profil)
 
     def traiter(p, log):
         email_sender.generer_brouillon(p, icp, brief, type_=type_,
-                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch)
+                                       niveau_recherche=niveau_recherche, contexte_batch=contexte_batch,
+                                       skill_nom=skill_nom)
         return f"✍️ Brouillon prêt : {p.get('prenom','')} {p.get('nom','')}"
 
     try:
@@ -883,6 +889,42 @@ def parametres_apercu_signature():
     if not chemin:
         return "", 404
     return send_file(chemin)
+
+
+@app.route("/parametres/skills", methods=["POST"])
+def parametres_ajouter_skill():
+    profil = db.profil_actif()
+    fichier = request.files.get("fichier")
+    nom = (request.form.get("nom") or "").strip()
+    if not fichier or fichier.filename == "":
+        flash("Aucun fichier .md sélectionné.", "erreur")
+        return redirect(url_for("parametres"))
+    if not nom:
+        # Repli sur le nom du fichier (sans l'extension) si aucun nom donné.
+        nom = fichier.filename.rsplit(".", 1)[0]
+    try:
+        contenu = fichier.read().decode("utf-8")
+    except UnicodeDecodeError:
+        flash("Le fichier ne semble pas être du texte UTF-8 valide.", "erreur")
+        return redirect(url_for("parametres"))
+    try:
+        profils.ajouter_skill(profil, nom, contenu)
+        flash(f"Skill « {nom} » ajouté.", "succes")
+    except ValueError as exc:
+        flash(str(exc), "erreur")
+    return redirect(url_for("parametres"))
+
+
+@app.route("/parametres/skills/supprimer", methods=["POST"])
+def parametres_supprimer_skill():
+    profil = db.profil_actif()
+    try:
+        index = int(request.form.get("index", -1))
+    except ValueError:
+        index = -1
+    profils.supprimer_skill(profil, index)
+    flash("Skill supprimé.", "succes")
+    return redirect(url_for("parametres"))
 
 
 @app.route("/parametres/reglages", methods=["POST"])

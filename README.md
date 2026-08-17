@@ -39,7 +39,8 @@ ouvrent directement le navigateur sur l'interface.
   en arrière-plan avec une barre de progression et un bouton **Annuler** —
   la page ne gèle plus jamais.
 - **Envoi** (`/envoi`) — réglages du lot (niveau de recherche web, contexte
-  libre) en haut, puis trois onglets cliquables :
+  libre, **skill à appliquer** si tu en as importé — jamais mémorisé,
+  propre à ce lot précis) en haut, puis trois onglets cliquables :
   - **Brouillons** — prêts à relire/envoyer/programmer, en liste compacte
     (clic sur un nom pour déplier son email complet) ;
   - **À générer** — les qualifiés sans brouillon, un par un ou tous d'un coup ;
@@ -83,8 +84,11 @@ ouvrent directement le navigateur sur l'interface.
   propres à chaque profil) pilotables entièrement depuis le navigateur ;
   puis ICP, ton des emails, **signature visuelle** (image ajoutée
   automatiquement sous chaque email envoyé — repli en texte simple si
-  aucune n'est configurée), limites d'envoi, délai/nombre de relances,
-  création de profils.
+  aucune n'est configurée), **skills** (consignes en Markdown pour un
+  scénario précis — secteur, poste ciblé, type de projet... — importées
+  depuis un fichier `.md` ; réimporter un skill du même nom remplace
+  l'ancien plutôt que de le dupliquer), limites d'envoi, délai/nombre de
+  relances, création de profils.
 - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
   éditables, notes de suivi horodatées, historique complet avec tokens
   consommés par action, suppression.

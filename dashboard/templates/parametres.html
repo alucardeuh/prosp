@@ -249,6 +249,44 @@
         </div>
 
         <div class="carte">
+            <h2>Skills (profil actif)</h2>
+            <p class="aide">
+                Des consignes en Markdown pour un scénario précis (un
+                secteur, un poste ciblé, un type de projet...), écrites à
+                l'avance — par exemple construites dans une conversation
+                Claude dédiée, puis téléchargées en <span class="mono">.md</span>
+                et importées ici. Contrairement au ton général (toujours
+                appliqué), un skill ne s'utilise que si tu le choisis pour
+                un lot d'envoi précis sur <a href="/envoi">Envoi</a> —
+                jamais par défaut.
+            </p>
+            {% if skills %}
+            <div class="liste-champs-perso" style="margin-top:12px">
+                {% for s in skills %}
+                <div class="champ-perso-ligne">
+                    <span>{{ s.nom }} <span class="aide">— {{ s.contenu[:60] }}{% if s.contenu|length > 60 %}...{% endif %}</span></span>
+                    <form method="post" action="/parametres/skills/supprimer" style="display:inline">
+                        <input type="hidden" name="index" value="{{ loop.index0 }}">
+                        <button type="submit" class="danger" onclick="return confirm('Supprimer ce skill ?')">Retirer</button>
+                    </form>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="aide" style="margin-top:10px">Aucun skill enregistré pour ce profil.</p>
+            {% endif %}
+            <form method="post" action="/parametres/skills" enctype="multipart/form-data" style="margin-top:14px">
+                <label for="skill_nom">Nom (affiché dans le sélecteur d'Envoi)</label>
+                <input type="text" id="skill_nom" name="nom" placeholder="Ex : DirCom Assurance">
+                <label for="skill_fichier" style="margin-top:10px">Fichier .md</label>
+                <input type="file" id="skill_fichier" name="fichier" accept=".md,text/markdown" required>
+                <div class="rangee-boutons" style="margin-top:12px">
+                    <button type="submit" class="primaire">Ajouter le skill</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="carte">
             <h2>Limites et relances</h2>
             <form method="post" action="/parametres/reglages">
                 <label for="limite_envois_jour">Envois max par jour, tous profils confondus (premiers emails + relances)</label>

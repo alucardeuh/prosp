@@ -125,6 +125,7 @@ def creer_profil(nom: str) -> str:
     _ecrire_yaml(dossier / "email_brief.yaml", BRIEF_VIERGE)
     _ecrire_yaml(dossier / "champs.yaml", {"champs": []})
     _ecrire_yaml(dossier / "modeles.yaml", {"modeles": []})
+    _ecrire_yaml(dossier / "skills.yaml", {"skills": []})
     return identifiant
 
 
@@ -240,6 +241,55 @@ def supprimer_modele(profil: str, index: int) -> None:
     if 0 <= index < len(modeles):
         modeles.pop(index)
         save_modeles(profil, modeles)
+
+
+def chemin_skills(profil: str) -> Path:
+    return PROFILS_DIR / profil / "skills.yaml"
+
+
+def load_skills(profil: str) -> list[dict]:
+    """Skills du profil : [{nom, contenu}, ...] — des consignes en Markdown,
+    écrites à l'avance (ex. dans une conversation Claude dédiée), pour un
+    scénario précis (secteur, poste ciblé, type de projet...). Contrairement
+    à l'ICP/au ton (toujours appliqués) ou aux modèles (toujours injectés en
+    exemples), un skill ne s'applique QUE si on le choisit explicitement
+    pour un lot d'envoi donné — voir /envoi."""
+    chemin = chemin_skills(profil)
+    if not chemin.exists():
+        _ecrire_yaml(chemin, {"skills": []})
+    with open(chemin, encoding="utf-8") as f:
+        contenu = yaml.safe_load(f) or {}
+    return contenu.get("skills", [])
+
+
+def save_skills(profil: str, skills: list[dict]) -> None:
+    _ecrire_yaml(chemin_skills(profil), {"skills": skills})
+
+
+def ajouter_skill(profil: str, nom: str, contenu_md: str) -> None:
+    """Ajoute un skill — ou REMPLACE le contenu si un skill du même nom
+    existe déjà (utile pour réimporter une version révisée). Sans ce
+    remplacement, deux skills portant le même nom pourraient coexister dans
+    le fichier, mais un seul serait jamais sélectionnable (le premier
+    trouvé par nom) : l'autre deviendrait un doublon mort, invisible."""
+    if not nom.strip() or not contenu_md.strip():
+        raise ValueError("Le nom et le contenu du skill sont obligatoires.")
+    nom = nom.strip()
+    skills = load_skills(profil)
+    for s in skills:
+        if s.get("nom") == nom:
+            s["contenu"] = contenu_md.strip()
+            save_skills(profil, skills)
+            return
+    skills.append({"nom": nom, "contenu": contenu_md.strip()})
+    save_skills(profil, skills)
+
+
+def supprimer_skill(profil: str, index: int) -> None:
+    skills = load_skills(profil)
+    if 0 <= index < len(skills):
+        skills.pop(index)
+        save_skills(profil, skills)
 
 
 def _identifiant_sur(texte: str) -> str:
