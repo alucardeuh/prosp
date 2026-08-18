@@ -27,6 +27,7 @@ import re
 import sys
 import tempfile
 import json
+from datetime import datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -75,7 +76,7 @@ def _definir_env(cle: str, valeur: str) -> None:
 
 
 from flask import (
-    Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
+    Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -173,7 +174,7 @@ def _contexte_global():
         "nb_a_envoyer": db.count_qualifies_avec_email(profil),
         "nb_a_relancer": len(_relances_dues(profil)),
         "nb_repondu": counts.get("repondu", 0),
-        "envois_jour": db.envois_du_jour(),
+        "envois_jour": db.envois_du_jour(profil),
         "limite_jour": limite,
     }
 
@@ -186,6 +187,26 @@ def _relances_dues(profil: str) -> list[dict]:
 
 def _cle_api_manquante() -> bool:
     return not os.environ.get("ANTHROPIC_API_KEY")
+
+
+def _icp_non_configure(icp: dict) -> bool:
+    """Détecte un ICP resté sur les valeurs d'exemple d'un profil neuf.
+    Qualifier contre « À DÉFINIR » consomme de vrais tokens pour des scores
+    qui ne veulent rien dire — mieux vaut bloquer et le dire clairement que
+    laisser l'utilisateur payer pour du bruit."""
+    produit = icp.get("produit", {})
+    description = (produit.get("description") or "").strip()
+    valeur = (produit.get("proposition_de_valeur") or "").strip()
+    nom = (produit.get("nom") or "").strip()
+    exemples = {
+        "à définir", "a définir", "a definir",
+        "décris ici ce que tu vends.", "decris ici ce que tu vends.",
+        "décris ici la valeur concrète pour le client.",
+        "decris ici la valeur concrete pour le client.",
+        "",
+    }
+    return (nom.lower() in exemples and description.lower() in exemples
+            and valeur.lower() in exemples)
 
 
 def _statut_gmail(profil: str) -> dict:
@@ -205,7 +226,7 @@ def _statut_hubspot(profil: str) -> dict:
 
 def _quota_restant() -> int:
     limite = int(db.get_reglage("limite_envois_jour") or 50)
-    return max(0, limite - db.envois_du_jour())
+    return max(0, limite - db.envois_du_jour(db.profil_actif()))
 
 
 # ================================================================ pages
@@ -218,10 +239,20 @@ def index():
     ordre = request.args.get("ordre", "desc")
     counts = db.counts_par_statut(profil=profil)
     prospects = db.list_prospects(statut=filtre, profil=profil, tri=tri, ordre=ordre)
+    total = sum(counts.values())
+    # État de configuration : utile uniquement pour le guide de démarrage,
+    # affiché quand le profil est encore vide — inutile de relire l'ICP et
+    # de vérifier Gmail à chaque affichage d'un pipeline déjà rempli.
+    icp_configure = gmail_connecte = False
+    if not total:
+        icp_configure = not _icp_non_configure(profils.load_icp(profil))
+        gmail_connecte = _statut_gmail(profil)["etat"] == "connecte"
     return render_template(
-        "index.html", counts=counts, total=sum(counts.values()), prospects=prospects,
+        "index.html", counts=counts, total=total, prospects=prospects,
         filtre_actif=filtre, tri=tri, ordre=ordre, actif="dashboard",
         cle_api_manquante=_cle_api_manquante(),
+        icp_configure=icp_configure, gmail_connecte=gmail_connecte,
+        profil_actif=profil,
     )
 
 
@@ -251,6 +282,12 @@ def envoi():
     # maintenant) et mis de côté ("Passer" ne supprime plus rien, juste
     # range ailleurs pour ne pas perdre le texte).
     prospects_avec_brouillon = db.list_prospects_avec_brouillon(profil)
+    # Signale les programmations dépassées de plus de 24h : le planificateur
+    # ne les envoie plus automatiquement (voir list_brouillons_programmes_dus),
+    # elles resteraient donc bloquées en silence sans cette indication.
+    ids_expires = {b["prospect_id"] for b in db.list_brouillons_programmes_expires()}
+    for p in prospects_avec_brouillon:
+        p["brouillon"]["programmation_expiree"] = p["id"] in ids_expires
     actifs = [p for p in prospects_avec_brouillon if not p["brouillon"].get("mis_de_cote")]
     de_cote = [p for p in prospects_avec_brouillon if p["brouillon"].get("mis_de_cote")]
     actifs.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
@@ -381,6 +418,11 @@ def api_qualifier():
         return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
     profil = db.profil_actif()
     icp = profils.load_icp(profil)
+    if _icp_non_configure(icp):
+        return jsonify({"erreur": f"L'ICP du profil « {profil} » n'est pas encore rempli — "
+                                  "la qualification comparerait tes prospects à un profil vide, "
+                                  "pour un résultat sans valeur. Décris ce que tu vends dans "
+                                  "Paramètres, puis relance."}), 400
 
     donnees = request.get_json(silent=True) or {}
     ids = donnees.get("ids")
@@ -698,7 +740,6 @@ def api_programmer(prospect_id: int):
     date_envoi = (donnees.get("date_envoi") or "").strip() or None
     if date_envoi:
         try:
-            from datetime import datetime
             datetime.fromisoformat(date_envoi)
         except ValueError:
             return jsonify({"erreur": "Date invalide."}), 400
@@ -925,6 +966,45 @@ def parametres_supprimer_skill():
     profils.supprimer_skill(profil, index)
     flash("Skill supprimé.", "succes")
     return redirect(url_for("parametres"))
+
+
+def _reponse_csv(lignes: list[dict], nom_fichier: str):
+    """Construit une réponse CSV téléchargeable. BOM UTF-8 en tête : sans
+    lui, Excel sous Windows affiche les accents en mojibake (Ana√Øs au lieu
+    d'Anaïs) — un export illisible ne sert à rien."""
+    import csv as csv_module
+    import io
+
+    if not lignes:
+        return Response("", mimetype="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'})
+    tampon = io.StringIO()
+    colonnes = list(lignes[0].keys())
+    # Certaines lignes peuvent avoir des champs perso que la première n'a
+    # pas — on prend l'union pour ne rien perdre.
+    for ligne in lignes[1:]:
+        for cle in ligne:
+            if cle not in colonnes:
+                colonnes.append(cle)
+    ecrivain = csv_module.DictWriter(tampon, fieldnames=colonnes, extrasaction="ignore")
+    ecrivain.writeheader()
+    ecrivain.writerows(lignes)
+    return Response("\ufeff" + tampon.getvalue(), mimetype="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'})
+
+
+@app.route("/parametres/export/prospects")
+def export_prospects_csv():
+    profil = db.profil_actif()
+    date = datetime.now().strftime("%Y-%m-%d")
+    return _reponse_csv(db.export_prospects(profil), f"prosp-{profil}-prospects-{date}.csv")
+
+
+@app.route("/parametres/export/historique")
+def export_historique_csv():
+    profil = db.profil_actif()
+    date = datetime.now().strftime("%Y-%m-%d")
+    return _reponse_csv(db.export_interactions(profil), f"prosp-{profil}-historique-{date}.csv")
 
 
 @app.route("/parametres/reglages", methods=["POST"])

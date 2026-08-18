@@ -17,6 +17,8 @@ import threading
 import uuid
 from datetime import datetime
 
+from db import database as db
+
 try:
     import anthropic as _anthropic_sdk
 except ImportError:  # ne devrait jamais arriver (dépendance du projet), mais ne doit jamais faire planter jobs.py
@@ -148,7 +150,18 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
                     if ligne:
                         _log(job_id, ligne)
                 except Exception as exc:  # noqa: BLE001 - un échec ne stoppe pas le lot
-                    _log(job_id, f"❌ {_message_lisible(exc)}")
+                    message = _message_lisible(exc)
+                    _log(job_id, f"❌ {message}")
+                    # Le log du job vit en mémoire et disparaît au
+                    # redémarrage : sans cette trace en base, un échec sur
+                    # 3 prospects parmi 50 serait introuvable dès que la
+                    # page est rechargée. Enregistré sur la fiche du
+                    # prospect concerné, donc retrouvable plus tard.
+                    if isinstance(element, dict) and element.get("id"):
+                        try:
+                            db.add_interaction(element["id"], "erreur", message)
+                        except Exception:  # noqa: BLE001 - une trace ratée ne doit jamais casser le lot
+                            pass
                     with _VERROU:
                         _JOBS[job_id]["erreurs"] += 1
                 with _VERROU:

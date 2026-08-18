@@ -104,9 +104,39 @@
 </div>
 
 {% else %}
-<div class="vide">
-    Aucun prospect dans le profil « {{ profil_actif }} » pour le moment.<br><br>
-    <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
+<div class="carte" style="margin-top:16px">
+    <h2>Bienvenue — par où commencer</h2>
+    <p class="aide">
+        Le profil « {{ profil_actif }} » est vide. Voici l'ordre logique pour
+        démarrer ; chaque étape prend quelques minutes.
+    </p>
+    <ol class="guide-demarrage">
+        <li>
+            <strong>Décris ce que tu vends</strong> — <a href="/parametres">Paramètres</a>, section ICP.
+            Sans ça, la qualification ne peut pas juger si un prospect est pertinent.
+            {% if icp_configure %}<span class="pastille pastille-ok">fait</span>{% endif %}
+        </li>
+        <li>
+            <strong>Ajoute ta clé API Anthropic</strong> — <a href="/parametres">Paramètres</a>, en haut de page.
+            {% if not cle_api_manquante %}<span class="pastille pastille-ok">fait</span>{% endif %}
+        </li>
+        <li>
+            <strong>Connecte Gmail</strong> — <a href="/parametres">Paramètres</a>, section Connexions.
+            Nécessaire uniquement pour envoyer, pas pour tester la qualification.
+            {% if gmail_connecte %}<span class="pastille pastille-ok">fait</span>{% endif %}
+        </li>
+        <li>
+            <strong>Ajoute des prospects</strong> — <a href="/ajouter">Ajouter</a>, à la main ou par import CSV.
+        </li>
+    </ol>
+    <p class="aide" style="margin-top:14px">
+        Ensuite : qualifie-les depuis cette page, génère les emails depuis
+        <a href="/envoi">Envoi</a>, relis-les, envoie. Rien ne part jamais sans ton clic.
+    </p>
+    <div class="rangee-boutons" style="margin-top:16px">
+        <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
+        <a href="/parametres" class="btn">Ouvrir les paramètres</a>
+    </div>
 </div>
 {% endif %}
 </div>

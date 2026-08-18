@@ -518,7 +518,7 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) -> 
             raise ValueError(f"Email invalide ({prospect['email']}) : {verif['raison']} — envoi refusé.")
 
     limite = int(db.get_reglage("limite_envois_jour") or 50)
-    if db.envois_du_jour() >= limite:
+    if db.envois_du_jour(prospect.get("profil") or db.profil_actif()) >= limite:
         raise ValueError(
             f"Limite d'envois du jour atteinte ({limite}). "
             "Réessaie demain ou ajuste la limite dans les paramètres."

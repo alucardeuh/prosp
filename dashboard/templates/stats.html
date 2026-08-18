@@ -68,33 +68,40 @@
 </div>
 
 <div class="carte">
-    <h2>Tokens consommés (API Claude)</h2>
+    <h2>Coût et tokens (API Claude)</h2>
     {% if tokens.tokens_entree or tokens.tokens_sortie %}
     <div class="tuiles">
         <div class="tuile">
-            <div class="valeur">{{ tokens.tokens_entree }}</div>
-            <div class="legende">tokens en entrée</div>
+            <div class="valeur">${{ tokens.cout_total_usd }}</div>
+            <div class="legende">coût total estimé</div>
         </div>
         <div class="tuile">
-            <div class="valeur">{{ tokens.tokens_sortie }}</div>
-            <div class="legende">tokens en sortie</div>
-        </div>
-        <div class="tuile">
-            <div class="valeur">{{ tokens.recherches_web }}</div>
-            <div class="legende">recherches web</div>
+            <div class="valeur">${{ tokens.cout_tokens_usd }}</div>
+            <div class="legende">dont tokens</div>
         </div>
         <div class="tuile">
             <div class="valeur">${{ tokens.cout_recherches_usd }}</div>
-            <div class="legende">coût des recherches</div>
+            <div class="legende">dont recherches web</div>
+        </div>
+        <div class="tuile">
+            <div class="valeur">{{ tokens.tokens_entree + tokens.tokens_sortie }}</div>
+            <div class="legende">tokens au total</div>
         </div>
     </div>
     <p class="aide">
-        Coût des recherches web calculé au tarif fixe de $10/1000 (hors coût
-        des tokens du contenu rapporté, inclus dans les totaux ci-dessus).
+        {{ tokens.tokens_entree }} en entrée, {{ tokens.tokens_sortie }} en sortie,
+        {{ tokens.recherches_web }} recherche(s) web.
         Détail par type d'action :
         {% for type_, d in tokens.par_type.items() %}
-        {{ type_ }} ({{ d.tokens_entree + d.tokens_sortie }} tokens){{ ", " if not loop.last }}
+        {{ type_ }} (${{ d.cout_usd }}){{ ", " if not loop.last }}
         {% endfor %}
+    </p>
+    <p class="aide">
+        Estimation basée sur les tarifs des modèles par défaut (Sonnet 5
+        pour la rédaction, Haiku pour la qualification et la lecture des
+        réponses) plus $10/1000 recherches web. Le cache de prompt n'est pas
+        déduit ici alors qu'il réduit fortement le coût des tokens répétés —
+        ta facture réelle est donc plutôt <em>plus basse</em> que ce chiffre.
     </p>
     {% else %}
     <div class="vide">Aucun appel API enregistré pour l'instant.</div>

@@ -436,6 +436,8 @@ td .score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
 .interaction.i-email_recu { border-color: var(--pine); }
 .interaction.i-qualification { border-color: var(--faint); }
 .interaction.i-note { border-color: var(--amber); }
+.interaction.i-erreur { border-color: var(--brick); }
+.interaction.i-erreur .texte { color: var(--brick); }
 .interaction .meta { font-family: var(--mono); font-size: 11px; color: var(--faint); margin-bottom: 3px; }
 .interaction .texte { font-size: 13.5px; white-space: pre-wrap; }
 
@@ -461,6 +463,11 @@ td .score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
   background: var(--card); border: 1px dashed var(--line-strong); border-radius: var(--r);
 }
 .mono { font-family: var(--mono); }
+
+.guide-demarrage { margin: 16px 0 0; padding-left: 22px; }
+.guide-demarrage li { margin-bottom: 12px; line-height: 1.55; font-size: 14px; }
+.guide-demarrage li::marker { color: var(--pine); font-weight: 700; }
+.guide-demarrage .pastille { margin-left: 6px; vertical-align: middle; }
 .compteur-vue { font-size: 12.5px; color: var(--faint); }
 .avertissement {
   background: var(--amber-soft); color: var(--amber); border-radius: 9px;

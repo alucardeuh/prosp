@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS prospects (
 CREATE TABLE IF NOT EXISTS interactions (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     prospect_id  INTEGER NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
-    type         TEXT NOT NULL,   -- email_envoye, relance_envoyee, email_recu, qualification, note, statut_manuel
+    type         TEXT NOT NULL,   -- email_envoye, relance_envoyee, email_recu, qualification, note, statut_manuel, erreur
     contenu      TEXT,
 
     -- Renseigné uniquement pour email_envoye / relance_envoyee : permet à la

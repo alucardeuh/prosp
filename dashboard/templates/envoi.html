@@ -109,7 +109,11 @@
                         </div>
                         <div class="programmation" id="programmation-{{ p.id }}">
                             {% if p.brouillon.date_envoi_prevue %}
+                            {% if p.brouillon.programmation_expiree %}
+                            <span class="pastille pastille-off">Programmé pour {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }} — non envoyé (app fermée à l'heure prévue). Relis puis envoie ou reprogramme.</span>
+                            {% else %}
                             <span class="pastille pastille-attente">Programmé : {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }}</span>
+                            {% endif %}
                             <button onclick="annulerProgrammation({{ p.id }}, this)">Annuler</button>
                             {% else %}
                             <input type="datetime-local" class="champ-date-programmation">

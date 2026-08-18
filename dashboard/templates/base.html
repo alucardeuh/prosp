@@ -45,13 +45,13 @@
             <a href="/" class="{{ 'actif' if actif == 'dashboard' }}">Pipeline
                 {% if nb_repondu %}<span class="badge chaud" title="Réponses en attente de décision">{{ nb_repondu }}</span>{% endif %}
             </a>
+            <a href="/ajouter" class="{{ 'actif' if actif == 'ajouter' }}">Ajouter</a>
             <a href="/envoi" class="{{ 'actif' if actif == 'envoi' }}">Envoi
                 {% if nb_a_envoyer %}<span class="badge">{{ nb_a_envoyer }}</span>{% endif %}
             </a>
             <a href="/relances" class="{{ 'actif' if actif == 'relances' }}">Relances
                 {% if nb_a_relancer %}<span class="badge chaud">{{ nb_a_relancer }}</span>{% endif %}
             </a>
-            <a href="/ajouter" class="{{ 'actif' if actif == 'ajouter' }}">Ajouter</a>
             <a href="/modeles" class="{{ 'actif' if actif == 'modeles' }}">Modèles</a>
             <a href="/stats" class="{{ 'actif' if actif == 'stats' }}">Stats</a>
             <a href="/parametres" class="{{ 'actif' if actif == 'parametres' }}">Paramètres</a>

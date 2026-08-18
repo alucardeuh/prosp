@@ -88,7 +88,9 @@ ouvrent directement le navigateur sur l'interface.
   scénario précis — secteur, poste ciblé, type de projet... — importées
   depuis un fichier `.md` ; réimporter un skill du même nom remplace
   l'ancien plutôt que de le dupliquer), limites d'envoi, délai/nombre de
-  relances, création de profils.
+  relances, création de profils, et **export CSV** (prospects avec leurs
+  champs personnalisés, historique complet) — ta seule sauvegarde si le
+  fichier de base est perdu, à faire régulièrement.
 - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
   éditables, notes de suivi horodatées, historique complet avec tokens
   consommés par action, suppression.
@@ -154,8 +156,13 @@ volontaire.
 ## Garde-fous (non négociables)
 
 - **Validation humaine** : aucun email ne part sans clic sur « Envoyer ».
-- **Quota quotidien** : 50 envois/jour par défaut (tous profils, premiers
-  emails + relances confondus), réglable, appliqué côté serveur.
+- **Quota quotidien** : 50 envois/jour par défaut, compté **par profil**
+  (premiers emails + relances confondus) puisque chaque profil a sa propre
+  connexion Gmail — réglable, appliqué côté serveur.
+- **Envoi programmé trop en retard** : un envoi dont l'heure est passée
+  depuis plus de 24h (app restée fermée) n'est jamais envoyé
+  automatiquement — il reste visible avec un message explicite, à relire
+  puis envoyer ou reprogrammer manuellement.
 - **Désinscription** : un prospect `desinscrit` est bloqué à l'envoi quoi
   qu'il arrive, et la lecture des réponses classe en désinscription au
   moindre doute (obligation RGPD/CPCE). La mention STOP est imposée dans

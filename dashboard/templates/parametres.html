@@ -347,6 +347,25 @@
     </div>
 </div>
 
+<div class="carte" style="margin-top:20px">
+    <h2>Exporter mes données — profil « {{ profil_connexions }} »</h2>
+    <p class="aide">
+        Récupère tout au format CSV, lisible directement dans Excel ou
+        Google Sheets. À faire régulièrement : c'est ta seule sauvegarde si
+        le fichier de base de données est perdu ou corrompu, et ça te permet
+        d'analyser tes résultats ailleurs.
+    </p>
+    <div class="rangee-boutons" style="margin-top:12px">
+        <a href="/parametres/export/prospects" class="btn primaire">Exporter les prospects</a>
+        <a href="/parametres/export/historique" class="btn">Exporter l'historique complet</a>
+    </div>
+    <p class="aide" style="margin-top:10px">
+        Les prospects incluent leurs champs personnalisés en colonnes.
+        L'historique contient tous les emails envoyés, réponses reçues,
+        notes et qualifications, avec le prospect concerné sur chaque ligne.
+    </p>
+</div>
+
 <div class="carte" style="border-color:var(--brick); margin-top:20px">
     <h2 style="color:var(--brick)">Zone dangereuse — profil « {{ profil_connexions }} »</h2>
     <p class="aide">

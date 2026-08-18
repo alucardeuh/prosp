@@ -576,16 +576,30 @@ def list_prospects_avec_brouillon(profil: str, db_path: Path = DB_PATH) -> list[
 
 # ---------------------------------------------------------------- quota & relances
 
-def envois_du_jour(db_path: Path = DB_PATH) -> int:
-    """Nombre d'emails (initiaux + relances) envoyés aujourd'hui, tous profils
-    confondus — la limite protège la délivrabilité de la boîte Gmail, qui est
-    unique, donc elle se compte globalement."""
+def envois_du_jour(profil: str | None = None, db_path: Path = DB_PATH) -> int:
+    """Nombre d'emails (initiaux + relances) envoyés aujourd'hui.
+
+    Compté PAR PROFIL : la limite protège la délivrabilité de la boîte
+    Gmail utilisée, et chaque profil a désormais sa propre connexion Gmail
+    (credentials/<profil>/). Un comptage global pénaliserait à tort deux
+    activités qui envoient chacune depuis une boîte différente. Sans profil
+    précisé, compte tout (utile pour un total d'ensemble)."""
     with get_connection(db_path) as conn:
-        row = conn.execute(
-            "SELECT COUNT(*) AS n FROM interactions "
-            "WHERE type IN ('email_envoye', 'relance_envoyee') "
-            "AND date(date) = date('now', 'localtime')"
-        ).fetchone()
+        if profil:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM interactions i "
+                "JOIN prospects p ON p.id = i.prospect_id "
+                "WHERE i.type IN ('email_envoye', 'relance_envoyee') "
+                "AND date(i.date) = date('now', 'localtime') "
+                "AND p.profil = ?",
+                (profil,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM interactions "
+                "WHERE type IN ('email_envoye', 'relance_envoyee') "
+                "AND date(date) = date('now', 'localtime')"
+            ).fetchone()
         return row["n"]
 
 
@@ -628,6 +642,40 @@ def stats_envois_par_semaine(nb_semaines: int = 8, db_path: Path = DB_PATH) -> l
         return [dict(r) for r in rows]
 
 
+def export_prospects(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+    """Tous les prospects du profil, champs personnalisés éclatés en
+    colonnes plutôt que laissés en JSON brut — un export doit être lisible
+    tel quel dans un tableur, pas nécessiter un décodage manuel."""
+    prospects = list_prospects(profil=profil, tri="date_creation", ordre="asc", db_path=db_path)
+    lignes = []
+    for p in prospects:
+        ligne = {k: v for k, v in p.items() if k != "champs_perso"}
+        try:
+            perso = json.loads(p.get("champs_perso") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            perso = {}
+        for cle, valeur in perso.items():
+            ligne[f"perso_{cle}"] = valeur
+        lignes.append(ligne)
+    return lignes
+
+
+def export_interactions(profil: str, db_path: Path = DB_PATH) -> list[dict]:
+    """Historique complet du profil (emails envoyés, réponses reçues, notes,
+    qualifications), avec de quoi identifier le prospect concerné sans avoir
+    à recouper avec un autre fichier."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """SELECT i.*, p.prenom, p.nom, p.email, p.entreprise
+               FROM interactions i
+               JOIN prospects p ON p.id = i.prospect_id
+               WHERE p.profil = ?
+               ORDER BY i.date ASC""",
+            (profil,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
 def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
     """Chiffres clés du profil : contactés, réponses, taux, désinscriptions...
     Un rebond compte comme "contacté" (l'email est bien parti) mais jamais
@@ -654,10 +702,41 @@ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
     }
 
 
+# Tarifs API Anthropic en $ par million de tokens (entrée, sortie).
+# Vérifiés en août 2026 : Sonnet 5 à $2/$10 (tarif rendu permanent par
+# Anthropic, la hausse prévue au 1er septembre ayant été annulée), Haiku
+# 4.5 à $1/$5. Les deux modèles n'ont pas le même prix, donc le coût est
+# calculé séparément selon le type d'interaction plutôt qu'avec un tarif
+# unique moyen : la qualification et la lecture des réponses tournent sur
+# Haiku, la rédaction d'emails sur Sonnet.
+TARIFS_USD_PAR_MTOK = {
+    "sonnet": (2.0, 10.0),
+    "haiku": (1.0, 5.0),
+}
+
+# Quel modèle traite quel type d'interaction (voir agents/*.py).
+MODELE_PAR_TYPE = {
+    "qualification": "haiku",
+    "email_recu": "haiku",
+    "email_envoye": "sonnet",
+    "relance_envoyee": "sonnet",
+}
+
+
+def _cout_usd(type_interaction: str, tokens_entree: int, tokens_sortie: int) -> float:
+    tarif_entree, tarif_sortie = TARIFS_USD_PAR_MTOK[MODELE_PAR_TYPE.get(type_interaction, "sonnet")]
+    return (tokens_entree * tarif_entree + tokens_sortie * tarif_sortie) / 1_000_000
+
+
 def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
     """Tokens et recherches web consommés par le profil, tous prospects
     confondus, avec le détail par type d'interaction (qualification,
-    email_envoye, relance_envoyee, email_recu) — pour la page Stats."""
+    email_envoye, relance_envoyee, email_recu) — pour la page Stats.
+
+    Le coût en dollars est une ESTIMATION : il suppose les modèles par
+    défaut et ignore la réduction du cache de prompt (qui fait payer les
+    lectures en cache 10% du tarif normal), donc la facture réelle est
+    plutôt plus basse que ce chiffre."""
     with get_connection(db_path) as conn:
         total = conn.execute(
             """SELECT COALESCE(SUM(i.tokens_entree), 0) AS tokens_entree,
@@ -677,12 +756,24 @@ def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
                GROUP BY i.type""",
             (profil,),
         ).fetchall()
+
+        detail = {}
+        cout_tokens = 0.0
+        for r in par_type:
+            ligne = dict(r)
+            ligne["cout_usd"] = round(_cout_usd(r["type"], r["tokens_entree"] or 0, r["tokens_sortie"] or 0), 4)
+            cout_tokens += ligne["cout_usd"]
+            detail[r["type"]] = ligne
+
+        cout_recherches = total["recherches_web"] * 10 / 1000
         return {
             "tokens_entree": total["tokens_entree"],
             "tokens_sortie": total["tokens_sortie"],
             "recherches_web": total["recherches_web"],
-            "cout_recherches_usd": round(total["recherches_web"] * 10 / 1000, 3),
-            "par_type": {r["type"]: dict(r) for r in par_type},
+            "cout_recherches_usd": round(cout_recherches, 3),
+            "cout_tokens_usd": round(cout_tokens, 3),
+            "cout_total_usd": round(cout_tokens + cout_recherches, 2),
+            "par_type": detail,
         }
 
 
@@ -774,10 +865,31 @@ def programmer_brouillon(prospect_id: int, date_envoi: str | None, db_path: Path
 
 def list_brouillons_programmes_dus(db_path: Path = DB_PATH) -> list[dict]:
     """Brouillons dont l'échéance programmée est atteinte — vérifié par le
-    planificateur en arrière-plan (dashboard/planificateur.py)."""
+    planificateur en arrière-plan (dashboard/planificateur.py).
+
+    Les échéances dépassées de plus de 24h sont volontairement EXCLUES :
+    l'app ne tourne que quand elle est ouverte, donc un envoi programmé
+    pendant une fermeture prolongée (week-end, vacances) partirait sinon
+    d'un coup au redémarrage, avec plusieurs jours de retard. Un email de
+    prospection qui référence une actualité devenue périmée fait mauvais
+    effet — mieux vaut laisser la personne décider de renvoyer ou non.
+    Ces brouillons restent programmés et visibles dans l'onglet Brouillons
+    avec leur date passée, ils ne sont simplement pas envoyés tout seuls."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             "SELECT * FROM brouillons WHERE date_envoi_prevue IS NOT NULL "
-            "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime')"
+            "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime') "
+            "AND datetime(date_envoi_prevue) >= datetime('now', 'localtime', '-1 day')"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_brouillons_programmes_expires(db_path: Path = DB_PATH) -> list[dict]:
+    """Brouillons dont l'échéance est dépassée de plus de 24h — jamais
+    envoyés automatiquement, à traiter manuellement (voir ci-dessus)."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM brouillons WHERE date_envoi_prevue IS NOT NULL "
+            "AND datetime(date_envoi_prevue) < datetime('now', 'localtime', '-1 day')"
         ).fetchall()
         return [dict(r) for r in rows]

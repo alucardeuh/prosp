@@ -1,0 +1,641 @@
+diff --git a/README.md b/README.md
+index 5065e93..b37a93f 100644
+--- a/README.md
++++ b/README.md
+@@ -88,7 +88,9 @@ ouvrent directement le navigateur sur l'interface.
+   scénario précis — secteur, poste ciblé, type de projet... — importées
+   depuis un fichier `.md` ; réimporter un skill du même nom remplace
+   l'ancien plutôt que de le dupliquer), limites d'envoi, délai/nombre de
+-  relances, création de profils.
++  relances, création de profils, et **export CSV** (prospects avec leurs
++  champs personnalisés, historique complet) — ta seule sauvegarde si le
++  fichier de base est perdu, à faire régulièrement.
+ - **Fiche prospect** (`/prospect/N`) — champs fixes et personnalisés
+   éditables, notes de suivi horodatées, historique complet avec tokens
+   consommés par action, suppression.
+@@ -154,8 +156,13 @@ volontaire.
+ ## Garde-fous (non négociables)
+ 
+ - **Validation humaine** : aucun email ne part sans clic sur « Envoyer ».
+-- **Quota quotidien** : 50 envois/jour par défaut (tous profils, premiers
+-  emails + relances confondus), réglable, appliqué côté serveur.
++- **Quota quotidien** : 50 envois/jour par défaut, compté **par profil**
++  (premiers emails + relances confondus) puisque chaque profil a sa propre
++  connexion Gmail — réglable, appliqué côté serveur.
++- **Envoi programmé trop en retard** : un envoi dont l'heure est passée
++  depuis plus de 24h (app restée fermée) n'est jamais envoyé
++  automatiquement — il reste visible avec un message explicite, à relire
++  puis envoyer ou reprogrammer manuellement.
+ - **Désinscription** : un prospect `desinscrit` est bloqué à l'envoi quoi
+   qu'il arrive, et la lecture des réponses classe en désinscription au
+   moindre doute (obligation RGPD/CPCE). La mention STOP est imposée dans
+diff --git a/agents/email_sender.py b/agents/email_sender.py
+index 0f2762e..da47fb7 100644
+--- a/agents/email_sender.py
++++ b/agents/email_sender.py
+@@ -518,7 +518,7 @@ def envoyer_brouillon(prospect_id: int, dry_run: bool = False, service=None) ->
+             raise ValueError(f"Email invalide ({prospect['email']}) : {verif['raison']} — envoi refusé.")
+ 
+     limite = int(db.get_reglage("limite_envois_jour") or 50)
+-    if db.envois_du_jour() >= limite:
++    if db.envois_du_jour(prospect.get("profil") or db.profil_actif()) >= limite:
+         raise ValueError(
+             f"Limite d'envois du jour atteinte ({limite}). "
+             "Réessaie demain ou ajuste la limite dans les paramètres."
+diff --git a/dashboard/app.py b/dashboard/app.py
+index 8f86b28..ad4011a 100644
+--- a/dashboard/app.py
++++ b/dashboard/app.py
+@@ -27,6 +27,7 @@ import re
+ import sys
+ import tempfile
+ import json
++from datetime import datetime
+ from pathlib import Path
+ 
+ from dotenv import load_dotenv
+@@ -75,7 +76,7 @@ def _definir_env(cle: str, valeur: str) -> None:
+ 
+ 
+ from flask import (
+-    Flask, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
++    Flask, Response, abort, flash, jsonify, redirect, render_template, request, send_file, url_for,
+ )
+ 
+ sys.path.insert(0, str(Path(__file__).parent.parent))
+@@ -173,7 +174,7 @@ def _contexte_global():
+         "nb_a_envoyer": db.count_qualifies_avec_email(profil),
+         "nb_a_relancer": len(_relances_dues(profil)),
+         "nb_repondu": counts.get("repondu", 0),
+-        "envois_jour": db.envois_du_jour(),
++        "envois_jour": db.envois_du_jour(profil),
+         "limite_jour": limite,
+     }
+ 
+@@ -188,6 +189,26 @@ def _cle_api_manquante() -> bool:
+     return not os.environ.get("ANTHROPIC_API_KEY")
+ 
+ 
++def _icp_non_configure(icp: dict) -> bool:
++    """Détecte un ICP resté sur les valeurs d'exemple d'un profil neuf.
++    Qualifier contre « À DÉFINIR » consomme de vrais tokens pour des scores
++    qui ne veulent rien dire — mieux vaut bloquer et le dire clairement que
++    laisser l'utilisateur payer pour du bruit."""
++    produit = icp.get("produit", {})
++    description = (produit.get("description") or "").strip()
++    valeur = (produit.get("proposition_de_valeur") or "").strip()
++    nom = (produit.get("nom") or "").strip()
++    exemples = {
++        "à définir", "a définir", "a definir",
++        "décris ici ce que tu vends.", "decris ici ce que tu vends.",
++        "décris ici la valeur concrète pour le client.",
++        "decris ici la valeur concrete pour le client.",
++        "",
++    }
++    return (nom.lower() in exemples and description.lower() in exemples
++            and valeur.lower() in exemples)
++
++
+ def _statut_gmail(profil: str) -> dict:
+     if not gmail_client.chemin_client_secret(profil).exists():
+         return {"etat": "sans_identifiants", "libelle": "Identifiants OAuth manquants"}
+@@ -205,7 +226,7 @@ def _statut_hubspot(profil: str) -> dict:
+ 
+ def _quota_restant() -> int:
+     limite = int(db.get_reglage("limite_envois_jour") or 50)
+-    return max(0, limite - db.envois_du_jour())
++    return max(0, limite - db.envois_du_jour(db.profil_actif()))
+ 
+ 
+ # ================================================================ pages
+@@ -218,10 +239,20 @@ def index():
+     ordre = request.args.get("ordre", "desc")
+     counts = db.counts_par_statut(profil=profil)
+     prospects = db.list_prospects(statut=filtre, profil=profil, tri=tri, ordre=ordre)
++    total = sum(counts.values())
++    # État de configuration : utile uniquement pour le guide de démarrage,
++    # affiché quand le profil est encore vide — inutile de relire l'ICP et
++    # de vérifier Gmail à chaque affichage d'un pipeline déjà rempli.
++    icp_configure = gmail_connecte = False
++    if not total:
++        icp_configure = not _icp_non_configure(profils.load_icp(profil))
++        gmail_connecte = _statut_gmail(profil)["etat"] == "connecte"
+     return render_template(
+-        "index.html", counts=counts, total=sum(counts.values()), prospects=prospects,
++        "index.html", counts=counts, total=total, prospects=prospects,
+         filtre_actif=filtre, tri=tri, ordre=ordre, actif="dashboard",
+         cle_api_manquante=_cle_api_manquante(),
++        icp_configure=icp_configure, gmail_connecte=gmail_connecte,
++        profil_actif=profil,
+     )
+ 
+ 
+@@ -251,6 +282,12 @@ def envoi():
+     # maintenant) et mis de côté ("Passer" ne supprime plus rien, juste
+     # range ailleurs pour ne pas perdre le texte).
+     prospects_avec_brouillon = db.list_prospects_avec_brouillon(profil)
++    # Signale les programmations dépassées de plus de 24h : le planificateur
++    # ne les envoie plus automatiquement (voir list_brouillons_programmes_dus),
++    # elles resteraient donc bloquées en silence sans cette indication.
++    ids_expires = {b["prospect_id"] for b in db.list_brouillons_programmes_expires()}
++    for p in prospects_avec_brouillon:
++        p["brouillon"]["programmation_expiree"] = p["id"] in ids_expires
+     actifs = [p for p in prospects_avec_brouillon if not p["brouillon"].get("mis_de_cote")]
+     de_cote = [p for p in prospects_avec_brouillon if p["brouillon"].get("mis_de_cote")]
+     actifs.sort(key=lambda p: p.get("score_qualification") or 0, reverse=True)
+@@ -381,6 +418,11 @@ def api_qualifier():
+         return jsonify({"erreur": "Clé API Anthropic non définie — renseigne-la dans Paramètres."}), 400
+     profil = db.profil_actif()
+     icp = profils.load_icp(profil)
++    if _icp_non_configure(icp):
++        return jsonify({"erreur": f"L'ICP du profil « {profil} » n'est pas encore rempli — "
++                                  "la qualification comparerait tes prospects à un profil vide, "
++                                  "pour un résultat sans valeur. Décris ce que tu vends dans "
++                                  "Paramètres, puis relance."}), 400
+ 
+     donnees = request.get_json(silent=True) or {}
+     ids = donnees.get("ids")
+@@ -698,7 +740,6 @@ def api_programmer(prospect_id: int):
+     date_envoi = (donnees.get("date_envoi") or "").strip() or None
+     if date_envoi:
+         try:
+-            from datetime import datetime
+             datetime.fromisoformat(date_envoi)
+         except ValueError:
+             return jsonify({"erreur": "Date invalide."}), 400
+@@ -927,6 +968,45 @@ def parametres_supprimer_skill():
+     return redirect(url_for("parametres"))
+ 
+ 
++def _reponse_csv(lignes: list[dict], nom_fichier: str):
++    """Construit une réponse CSV téléchargeable. BOM UTF-8 en tête : sans
++    lui, Excel sous Windows affiche les accents en mojibake (Ana√Øs au lieu
++    d'Anaïs) — un export illisible ne sert à rien."""
++    import csv as csv_module
++    import io
++
++    if not lignes:
++        return Response("", mimetype="text/csv",
++                        headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'})
++    tampon = io.StringIO()
++    colonnes = list(lignes[0].keys())
++    # Certaines lignes peuvent avoir des champs perso que la première n'a
++    # pas — on prend l'union pour ne rien perdre.
++    for ligne in lignes[1:]:
++        for cle in ligne:
++            if cle not in colonnes:
++                colonnes.append(cle)
++    ecrivain = csv_module.DictWriter(tampon, fieldnames=colonnes, extrasaction="ignore")
++    ecrivain.writeheader()
++    ecrivain.writerows(lignes)
++    return Response("\ufeff" + tampon.getvalue(), mimetype="text/csv; charset=utf-8",
++                    headers={"Content-Disposition": f'attachment; filename="{nom_fichier}"'})
++
++
++@app.route("/parametres/export/prospects")
++def export_prospects_csv():
++    profil = db.profil_actif()
++    date = datetime.now().strftime("%Y-%m-%d")
++    return _reponse_csv(db.export_prospects(profil), f"prosp-{profil}-prospects-{date}.csv")
++
++
++@app.route("/parametres/export/historique")
++def export_historique_csv():
++    profil = db.profil_actif()
++    date = datetime.now().strftime("%Y-%m-%d")
++    return _reponse_csv(db.export_interactions(profil), f"prosp-{profil}-historique-{date}.csv")
++
++
+ @app.route("/parametres/reglages", methods=["POST"])
+ def parametres_reglages():
+     for cle, defaut in (
+diff --git a/dashboard/jobs.py b/dashboard/jobs.py
+index 4e7d96d..651c8d3 100644
+--- a/dashboard/jobs.py
++++ b/dashboard/jobs.py
+@@ -17,6 +17,8 @@ import threading
+ import uuid
+ from datetime import datetime
+ 
++from db import database as db
++
+ try:
+     import anthropic as _anthropic_sdk
+ except ImportError:  # ne devrait jamais arriver (dépendance du projet), mais ne doit jamais faire planter jobs.py
+@@ -148,7 +150,18 @@ def lancer(titre: str, elements: list, traiter_un, terminer=None) -> str:
+                     if ligne:
+                         _log(job_id, ligne)
+                 except Exception as exc:  # noqa: BLE001 - un échec ne stoppe pas le lot
+-                    _log(job_id, f"❌ {_message_lisible(exc)}")
++                    message = _message_lisible(exc)
++                    _log(job_id, f"❌ {message}")
++                    # Le log du job vit en mémoire et disparaît au
++                    # redémarrage : sans cette trace en base, un échec sur
++                    # 3 prospects parmi 50 serait introuvable dès que la
++                    # page est rechargée. Enregistré sur la fiche du
++                    # prospect concerné, donc retrouvable plus tard.
++                    if isinstance(element, dict) and element.get("id"):
++                        try:
++                            db.add_interaction(element["id"], "erreur", message)
++                        except Exception:  # noqa: BLE001 - une trace ratée ne doit jamais casser le lot
++                            pass
+                     with _VERROU:
+                         _JOBS[job_id]["erreurs"] += 1
+                 with _VERROU:
+diff --git a/dashboard/static/app.css b/dashboard/static/app.css
+index 7659376..89bc57d 100644
+--- a/dashboard/static/app.css
++++ b/dashboard/static/app.css
+@@ -436,6 +436,8 @@ td .score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+ .interaction.i-email_recu { border-color: var(--pine); }
+ .interaction.i-qualification { border-color: var(--faint); }
+ .interaction.i-note { border-color: var(--amber); }
++.interaction.i-erreur { border-color: var(--brick); }
++.interaction.i-erreur .texte { color: var(--brick); }
+ .interaction .meta { font-family: var(--mono); font-size: 11px; color: var(--faint); margin-bottom: 3px; }
+ .interaction .texte { font-size: 13.5px; white-space: pre-wrap; }
+ 
+@@ -461,6 +463,11 @@ td .score { font-family: var(--mono); font-size: 12.5px; font-weight: 600; }
+   background: var(--card); border: 1px dashed var(--line-strong); border-radius: var(--r);
+ }
+ .mono { font-family: var(--mono); }
++
++.guide-demarrage { margin: 16px 0 0; padding-left: 22px; }
++.guide-demarrage li { margin-bottom: 12px; line-height: 1.55; font-size: 14px; }
++.guide-demarrage li::marker { color: var(--pine); font-weight: 700; }
++.guide-demarrage .pastille { margin-left: 6px; vertical-align: middle; }
+ .compteur-vue { font-size: 12.5px; color: var(--faint); }
+ .avertissement {
+   background: var(--amber-soft); color: var(--amber); border-radius: 9px;
+diff --git a/dashboard/templates/base.html b/dashboard/templates/base.html
+index d6a17c0..2a86a9d 100644
+--- a/dashboard/templates/base.html
++++ b/dashboard/templates/base.html
+@@ -45,13 +45,13 @@
+             <a href="/" class="{{ 'actif' if actif == 'dashboard' }}">Pipeline
+                 {% if nb_repondu %}<span class="badge chaud" title="Réponses en attente de décision">{{ nb_repondu }}</span>{% endif %}
+             </a>
++            <a href="/ajouter" class="{{ 'actif' if actif == 'ajouter' }}">Ajouter</a>
+             <a href="/envoi" class="{{ 'actif' if actif == 'envoi' }}">Envoi
+                 {% if nb_a_envoyer %}<span class="badge">{{ nb_a_envoyer }}</span>{% endif %}
+             </a>
+             <a href="/relances" class="{{ 'actif' if actif == 'relances' }}">Relances
+                 {% if nb_a_relancer %}<span class="badge chaud">{{ nb_a_relancer }}</span>{% endif %}
+             </a>
+-            <a href="/ajouter" class="{{ 'actif' if actif == 'ajouter' }}">Ajouter</a>
+             <a href="/modeles" class="{{ 'actif' if actif == 'modeles' }}">Modèles</a>
+             <a href="/stats" class="{{ 'actif' if actif == 'stats' }}">Stats</a>
+             <a href="/parametres" class="{{ 'actif' if actif == 'parametres' }}">Paramètres</a>
+diff --git a/dashboard/templates/envoi.html b/dashboard/templates/envoi.html
+index ba989be..183848a 100644
+--- a/dashboard/templates/envoi.html
++++ b/dashboard/templates/envoi.html
+@@ -109,7 +109,11 @@
+                         </div>
+                         <div class="programmation" id="programmation-{{ p.id }}">
+                             {% if p.brouillon.date_envoi_prevue %}
++                            {% if p.brouillon.programmation_expiree %}
++                            <span class="pastille pastille-off">Programmé pour {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }} — non envoyé (app fermée à l'heure prévue). Relis puis envoie ou reprogramme.</span>
++                            {% else %}
+                             <span class="pastille pastille-attente">Programmé : {{ p.brouillon.date_envoi_prevue | replace('T', ' ') }}</span>
++                            {% endif %}
+                             <button onclick="annulerProgrammation({{ p.id }}, this)">Annuler</button>
+                             {% else %}
+                             <input type="datetime-local" class="champ-date-programmation">
+diff --git a/dashboard/templates/index.html b/dashboard/templates/index.html
+index 62c0f95..2ff53e2 100644
+--- a/dashboard/templates/index.html
++++ b/dashboard/templates/index.html
+@@ -104,9 +104,39 @@
+ </div>
+ 
+ {% else %}
+-<div class="vide">
+-    Aucun prospect dans le profil « {{ profil_actif }} » pour le moment.<br><br>
+-    <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
++<div class="carte" style="margin-top:16px">
++    <h2>Bienvenue — par où commencer</h2>
++    <p class="aide">
++        Le profil « {{ profil_actif }} » est vide. Voici l'ordre logique pour
++        démarrer ; chaque étape prend quelques minutes.
++    </p>
++    <ol class="guide-demarrage">
++        <li>
++            <strong>Décris ce que tu vends</strong> — <a href="/parametres">Paramètres</a>, section ICP.
++            Sans ça, la qualification ne peut pas juger si un prospect est pertinent.
++            {% if icp_configure %}<span class="pastille pastille-ok">fait</span>{% endif %}
++        </li>
++        <li>
++            <strong>Ajoute ta clé API Anthropic</strong> — <a href="/parametres">Paramètres</a>, en haut de page.
++            {% if not cle_api_manquante %}<span class="pastille pastille-ok">fait</span>{% endif %}
++        </li>
++        <li>
++            <strong>Connecte Gmail</strong> — <a href="/parametres">Paramètres</a>, section Connexions.
++            Nécessaire uniquement pour envoyer, pas pour tester la qualification.
++            {% if gmail_connecte %}<span class="pastille pastille-ok">fait</span>{% endif %}
++        </li>
++        <li>
++            <strong>Ajoute des prospects</strong> — <a href="/ajouter">Ajouter</a>, à la main ou par import CSV.
++        </li>
++    </ol>
++    <p class="aide" style="margin-top:14px">
++        Ensuite : qualifie-les depuis cette page, génère les emails depuis
++        <a href="/envoi">Envoi</a>, relis-les, envoie. Rien ne part jamais sans ton clic.
++    </p>
++    <div class="rangee-boutons" style="margin-top:16px">
++        <a href="/ajouter" class="btn primaire">Ajouter des prospects</a>
++        <a href="/parametres" class="btn">Ouvrir les paramètres</a>
++    </div>
+ </div>
+ {% endif %}
+ </div>
+diff --git a/dashboard/templates/parametres.html b/dashboard/templates/parametres.html
+index 6f2af2c..fff43d9 100644
+--- a/dashboard/templates/parametres.html
++++ b/dashboard/templates/parametres.html
+@@ -347,6 +347,25 @@
+     </div>
+ </div>
+ 
++<div class="carte" style="margin-top:20px">
++    <h2>Exporter mes données — profil « {{ profil_connexions }} »</h2>
++    <p class="aide">
++        Récupère tout au format CSV, lisible directement dans Excel ou
++        Google Sheets. À faire régulièrement : c'est ta seule sauvegarde si
++        le fichier de base de données est perdu ou corrompu, et ça te permet
++        d'analyser tes résultats ailleurs.
++    </p>
++    <div class="rangee-boutons" style="margin-top:12px">
++        <a href="/parametres/export/prospects" class="btn primaire">Exporter les prospects</a>
++        <a href="/parametres/export/historique" class="btn">Exporter l'historique complet</a>
++    </div>
++    <p class="aide" style="margin-top:10px">
++        Les prospects incluent leurs champs personnalisés en colonnes.
++        L'historique contient tous les emails envoyés, réponses reçues,
++        notes et qualifications, avec le prospect concerné sur chaque ligne.
++    </p>
++</div>
++
+ <div class="carte" style="border-color:var(--brick); margin-top:20px">
+     <h2 style="color:var(--brick)">Zone dangereuse — profil « {{ profil_connexions }} »</h2>
+     <p class="aide">
+diff --git a/dashboard/templates/stats.html b/dashboard/templates/stats.html
+index 86e9167..de38e85 100644
+--- a/dashboard/templates/stats.html
++++ b/dashboard/templates/stats.html
+@@ -68,34 +68,41 @@
+ </div>
+ 
+ <div class="carte">
+-    <h2>Tokens consommés (API Claude)</h2>
++    <h2>Coût et tokens (API Claude)</h2>
+     {% if tokens.tokens_entree or tokens.tokens_sortie %}
+     <div class="tuiles">
+         <div class="tuile">
+-            <div class="valeur">{{ tokens.tokens_entree }}</div>
+-            <div class="legende">tokens en entrée</div>
++            <div class="valeur">${{ tokens.cout_total_usd }}</div>
++            <div class="legende">coût total estimé</div>
+         </div>
+         <div class="tuile">
+-            <div class="valeur">{{ tokens.tokens_sortie }}</div>
+-            <div class="legende">tokens en sortie</div>
++            <div class="valeur">${{ tokens.cout_tokens_usd }}</div>
++            <div class="legende">dont tokens</div>
+         </div>
+         <div class="tuile">
+-            <div class="valeur">{{ tokens.recherches_web }}</div>
+-            <div class="legende">recherches web</div>
++            <div class="valeur">${{ tokens.cout_recherches_usd }}</div>
++            <div class="legende">dont recherches web</div>
+         </div>
+         <div class="tuile">
+-            <div class="valeur">${{ tokens.cout_recherches_usd }}</div>
+-            <div class="legende">coût des recherches</div>
++            <div class="valeur">{{ tokens.tokens_entree + tokens.tokens_sortie }}</div>
++            <div class="legende">tokens au total</div>
+         </div>
+     </div>
+     <p class="aide">
+-        Coût des recherches web calculé au tarif fixe de $10/1000 (hors coût
+-        des tokens du contenu rapporté, inclus dans les totaux ci-dessus).
++        {{ tokens.tokens_entree }} en entrée, {{ tokens.tokens_sortie }} en sortie,
++        {{ tokens.recherches_web }} recherche(s) web.
+         Détail par type d'action :
+         {% for type_, d in tokens.par_type.items() %}
+-        {{ type_ }} ({{ d.tokens_entree + d.tokens_sortie }} tokens){{ ", " if not loop.last }}
++        {{ type_ }} (${{ d.cout_usd }}){{ ", " if not loop.last }}
+         {% endfor %}
+     </p>
++    <p class="aide">
++        Estimation basée sur les tarifs des modèles par défaut (Sonnet 5
++        pour la rédaction, Haiku pour la qualification et la lecture des
++        réponses) plus $10/1000 recherches web. Le cache de prompt n'est pas
++        déduit ici alors qu'il réduit fortement le coût des tokens répétés —
++        ta facture réelle est donc plutôt <em>plus basse</em> que ce chiffre.
++    </p>
+     {% else %}
+     <div class="vide">Aucun appel API enregistré pour l'instant.</div>
+     {% endif %}
+diff --git a/db/database.py b/db/database.py
+index 0556112..ddb878a 100644
+--- a/db/database.py
++++ b/db/database.py
+@@ -576,16 +576,30 @@ def list_prospects_avec_brouillon(profil: str, db_path: Path = DB_PATH) -> list[
+ 
+ # ---------------------------------------------------------------- quota & relances
+ 
+-def envois_du_jour(db_path: Path = DB_PATH) -> int:
+-    """Nombre d'emails (initiaux + relances) envoyés aujourd'hui, tous profils
+-    confondus — la limite protège la délivrabilité de la boîte Gmail, qui est
+-    unique, donc elle se compte globalement."""
++def envois_du_jour(profil: str | None = None, db_path: Path = DB_PATH) -> int:
++    """Nombre d'emails (initiaux + relances) envoyés aujourd'hui.
++
++    Compté PAR PROFIL : la limite protège la délivrabilité de la boîte
++    Gmail utilisée, et chaque profil a désormais sa propre connexion Gmail
++    (credentials/<profil>/). Un comptage global pénaliserait à tort deux
++    activités qui envoient chacune depuis une boîte différente. Sans profil
++    précisé, compte tout (utile pour un total d'ensemble)."""
+     with get_connection(db_path) as conn:
+-        row = conn.execute(
+-            "SELECT COUNT(*) AS n FROM interactions "
+-            "WHERE type IN ('email_envoye', 'relance_envoyee') "
+-            "AND date(date) = date('now', 'localtime')"
+-        ).fetchone()
++        if profil:
++            row = conn.execute(
++                "SELECT COUNT(*) AS n FROM interactions i "
++                "JOIN prospects p ON p.id = i.prospect_id "
++                "WHERE i.type IN ('email_envoye', 'relance_envoyee') "
++                "AND date(i.date) = date('now', 'localtime') "
++                "AND p.profil = ?",
++                (profil,),
++            ).fetchone()
++        else:
++            row = conn.execute(
++                "SELECT COUNT(*) AS n FROM interactions "
++                "WHERE type IN ('email_envoye', 'relance_envoyee') "
++                "AND date(date) = date('now', 'localtime')"
++            ).fetchone()
+         return row["n"]
+ 
+ 
+@@ -628,6 +642,40 @@ def stats_envois_par_semaine(nb_semaines: int = 8, db_path: Path = DB_PATH) -> l
+         return [dict(r) for r in rows]
+ 
+ 
++def export_prospects(profil: str, db_path: Path = DB_PATH) -> list[dict]:
++    """Tous les prospects du profil, champs personnalisés éclatés en
++    colonnes plutôt que laissés en JSON brut — un export doit être lisible
++    tel quel dans un tableur, pas nécessiter un décodage manuel."""
++    prospects = list_prospects(profil=profil, tri="date_creation", ordre="asc", db_path=db_path)
++    lignes = []
++    for p in prospects:
++        ligne = {k: v for k, v in p.items() if k != "champs_perso"}
++        try:
++            perso = json.loads(p.get("champs_perso") or "{}")
++        except (json.JSONDecodeError, TypeError):
++            perso = {}
++        for cle, valeur in perso.items():
++            ligne[f"perso_{cle}"] = valeur
++        lignes.append(ligne)
++    return lignes
++
++
++def export_interactions(profil: str, db_path: Path = DB_PATH) -> list[dict]:
++    """Historique complet du profil (emails envoyés, réponses reçues, notes,
++    qualifications), avec de quoi identifier le prospect concerné sans avoir
++    à recouper avec un autre fichier."""
++    with get_connection(db_path) as conn:
++        rows = conn.execute(
++            """SELECT i.*, p.prenom, p.nom, p.email, p.entreprise
++               FROM interactions i
++               JOIN prospects p ON p.id = i.prospect_id
++               WHERE p.profil = ?
++               ORDER BY i.date ASC""",
++            (profil,),
++        ).fetchall()
++        return [dict(r) for r in rows]
++
++
+ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
+     """Chiffres clés du profil : contactés, réponses, taux, désinscriptions...
+     Un rebond compte comme "contacté" (l'email est bien parti) mais jamais
+@@ -654,10 +702,41 @@ def stats_globales(profil: str, db_path: Path = DB_PATH) -> dict:
+     }
+ 
+ 
++# Tarifs API Anthropic en $ par million de tokens (entrée, sortie).
++# Vérifiés en août 2026 : Sonnet 5 à $2/$10 (tarif rendu permanent par
++# Anthropic, la hausse prévue au 1er septembre ayant été annulée), Haiku
++# 4.5 à $1/$5. Les deux modèles n'ont pas le même prix, donc le coût est
++# calculé séparément selon le type d'interaction plutôt qu'avec un tarif
++# unique moyen : la qualification et la lecture des réponses tournent sur
++# Haiku, la rédaction d'emails sur Sonnet.
++TARIFS_USD_PAR_MTOK = {
++    "sonnet": (2.0, 10.0),
++    "haiku": (1.0, 5.0),
++}
++
++# Quel modèle traite quel type d'interaction (voir agents/*.py).
++MODELE_PAR_TYPE = {
++    "qualification": "haiku",
++    "email_recu": "haiku",
++    "email_envoye": "sonnet",
++    "relance_envoyee": "sonnet",
++}
++
++
++def _cout_usd(type_interaction: str, tokens_entree: int, tokens_sortie: int) -> float:
++    tarif_entree, tarif_sortie = TARIFS_USD_PAR_MTOK[MODELE_PAR_TYPE.get(type_interaction, "sonnet")]
++    return (tokens_entree * tarif_entree + tokens_sortie * tarif_sortie) / 1_000_000
++
++
+ def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
+     """Tokens et recherches web consommés par le profil, tous prospects
+     confondus, avec le détail par type d'interaction (qualification,
+-    email_envoye, relance_envoyee, email_recu) — pour la page Stats."""
++    email_envoye, relance_envoyee, email_recu) — pour la page Stats.
++
++    Le coût en dollars est une ESTIMATION : il suppose les modèles par
++    défaut et ignore la réduction du cache de prompt (qui fait payer les
++    lectures en cache 10% du tarif normal), donc la facture réelle est
++    plutôt plus basse que ce chiffre."""
+     with get_connection(db_path) as conn:
+         total = conn.execute(
+             """SELECT COALESCE(SUM(i.tokens_entree), 0) AS tokens_entree,
+@@ -677,12 +756,24 @@ def stats_tokens(profil: str, db_path: Path = DB_PATH) -> dict:
+                GROUP BY i.type""",
+             (profil,),
+         ).fetchall()
++
++        detail = {}
++        cout_tokens = 0.0
++        for r in par_type:
++            ligne = dict(r)
++            ligne["cout_usd"] = round(_cout_usd(r["type"], r["tokens_entree"] or 0, r["tokens_sortie"] or 0), 4)
++            cout_tokens += ligne["cout_usd"]
++            detail[r["type"]] = ligne
++
++        cout_recherches = total["recherches_web"] * 10 / 1000
+         return {
+             "tokens_entree": total["tokens_entree"],
+             "tokens_sortie": total["tokens_sortie"],
+             "recherches_web": total["recherches_web"],
+-            "cout_recherches_usd": round(total["recherches_web"] * 10 / 1000, 3),
+-            "par_type": {r["type"]: dict(r) for r in par_type},
++            "cout_recherches_usd": round(cout_recherches, 3),
++            "cout_tokens_usd": round(cout_tokens, 3),
++            "cout_total_usd": round(cout_tokens + cout_recherches, 2),
++            "par_type": detail,
+         }
+ 
+ 
+@@ -774,10 +865,31 @@ def programmer_brouillon(prospect_id: int, date_envoi: str | None, db_path: Path
+ 
+ def list_brouillons_programmes_dus(db_path: Path = DB_PATH) -> list[dict]:
+     """Brouillons dont l'échéance programmée est atteinte — vérifié par le
+-    planificateur en arrière-plan (dashboard/planificateur.py)."""
++    planificateur en arrière-plan (dashboard/planificateur.py).
++
++    Les échéances dépassées de plus de 24h sont volontairement EXCLUES :
++    l'app ne tourne que quand elle est ouverte, donc un envoi programmé
++    pendant une fermeture prolongée (week-end, vacances) partirait sinon
++    d'un coup au redémarrage, avec plusieurs jours de retard. Un email de
++    prospection qui référence une actualité devenue périmée fait mauvais
++    effet — mieux vaut laisser la personne décider de renvoyer ou non.
++    Ces brouillons restent programmés et visibles dans l'onglet Brouillons
++    avec leur date passée, ils ne sont simplement pas envoyés tout seuls."""
++    with get_connection(db_path) as conn:
++        rows = conn.execute(
++            "SELECT * FROM brouillons WHERE date_envoi_prevue IS NOT NULL "
++            "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime') "
++            "AND datetime(date_envoi_prevue) >= datetime('now', 'localtime', '-1 day')"
++        ).fetchall()
++        return [dict(r) for r in rows]
++
++
++def list_brouillons_programmes_expires(db_path: Path = DB_PATH) -> list[dict]:
++    """Brouillons dont l'échéance est dépassée de plus de 24h — jamais
++    envoyés automatiquement, à traiter manuellement (voir ci-dessus)."""
+     with get_connection(db_path) as conn:
+         rows = conn.execute(
+             "SELECT * FROM brouillons WHERE date_envoi_prevue IS NOT NULL "
+-            "AND datetime(date_envoi_prevue) <= datetime('now', 'localtime')"
++            "AND datetime(date_envoi_prevue) < datetime('now', 'localtime', '-1 day')"
+         ).fetchall()
+         return [dict(r) for r in rows]
+diff --git a/db/schema.sql b/db/schema.sql
+index af0a360..5c51e08 100644
+--- a/db/schema.sql
++++ b/db/schema.sql
+@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS prospects (
+ CREATE TABLE IF NOT EXISTS interactions (
+     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+     prospect_id  INTEGER NOT NULL REFERENCES prospects(id) ON DELETE CASCADE,
+-    type         TEXT NOT NULL,   -- email_envoye, relance_envoyee, email_recu, qualification, note, statut_manuel
++    type         TEXT NOT NULL,   -- email_envoye, relance_envoyee, email_recu, qualification, note, statut_manuel, erreur
+     contenu      TEXT,
+ 
+     -- Renseigné uniquement pour email_envoye / relance_envoyee : permet à la
